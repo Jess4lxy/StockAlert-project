@@ -1,0 +1,28 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Variables de entorno (credenciales)
+.env
+.env.*
+!.env.example
+
+# Datos generados por el ETL (se regeneran con el script)
+etl/data/raw/
+etl/data/clean/
+etl/output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
