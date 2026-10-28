@@ -10,7 +10,10 @@
     "load": "tsx src/load.ts",
     "queries": "tsx src/queries.ts",
     "etl": "npm run generate && npm run transform && npm run load && npm run queries",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "indices": "tsx src/indices.ts",
+    "bench": "tsx src/benchmark.ts",
+    "bench:comparar": "tsx src/comparar.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.9",
