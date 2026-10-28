@@ -31,7 +31,8 @@ stockalert/
 Requisitos: Node.js 20+, Docker Desktop.
 
 1. Copiar `.env.example` a `.env` y cambiar la contraseña. **El archivo `.env` nunca se sube al repositorio.**
-2. Las instrucciones para correr la aplicación web se agregan conforme avanza el proyecto.
+2. Levantar la base de datos y cargar los datos (secciones siguientes).
+3. Correr la API y la aplicación web (sección [Aplicación web](#aplicación-web)).
 
 ## Base de datos local
 
@@ -72,6 +73,25 @@ Resultado de la transformación (siempre el mismo, por la semilla fija):
 | alertas | 208 | 208 | 0 | 0 | 208 |
 
 En [`etl/data/sample/`](etl/data/sample) hay una muestra de 50 filas de cada archivo crudo. Los archivos completos no se suben porque el generador los vuelve a crear idénticos.
+
+## Aplicación web
+
+En dos terminales, con la base de datos ya cargada:
+
+```bash
+cd backend && npm install && npm run dev     # API en http://localhost:3000/api
+cd frontend && npm install && npm run dev    # Web en http://localhost:5173
+```
+
+La pantalla **Movimientos de inventario** permite buscar por nombre de producto, filtrar por tipo y categoría y paginar (10, 20, 50 o 100 por página). La búsqueda, el filtro y la paginación se resuelven en PostgreSQL con `LIMIT`/`OFFSET`, así que el navegador solo descarga la página que muestra y nunca los 10,000 registros.
+
+| Endpoint | Parámetros | Respuesta |
+|---|---|---|
+| `GET /api/movimientos` | `q` (texto en el nombre del producto), `tipo` (`entrada`/`salida`/`ajuste`), `categoria`, `page`, `limit` (10/20/50/100) | `{ data, page, limit, total, totalPages }` |
+| `GET /api/categorias` | — | Lista de categorías para el filtro |
+| `GET /api/salud` | — | `{ ok: true }` |
+
+Los parámetros se envían a PostgreSQL como consultas parametrizadas (`$1`, `$2`…), nunca concatenados al SQL. Si el frontend corre en otro origen, se define `CORS_ORIGIN` en el `.env` (por defecto `http://localhost:5173`).
 
 ## Entregas
 
