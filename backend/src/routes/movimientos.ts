@@ -43,6 +43,7 @@ movimientos.get('/', async (req, res) => {
     JOIN usuarios u ON u.id_usuario = m.id_usuario
     ${where}`;
 
+  const inicio = performance.now();
   const [total, filas] = await Promise.all([
     pool.query<{ total: number }>(`SELECT count(*)::int AS total ${desde}`, valores),
     pool.query(
@@ -54,6 +55,8 @@ movimientos.get('/', async (req, res) => {
       [...valores, limit, (page - 1) * limit],
     ),
   ]);
+  // Tiempo de las consultas en PostgreSQL; lo usa la prueba de rendimiento (Tarea 3)
+  res.set('Server-Timing', `db;dur=${(performance.now() - inicio).toFixed(2)}`);
 
   const registros = total.rows[0].total;
   res.json({

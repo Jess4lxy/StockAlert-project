@@ -2,6 +2,7 @@ import cors from 'cors';
 import express, { type ErrorRequestHandler } from 'express';
 import { config } from './config.js';
 import { categorias } from './routes/categorias.js';
+import { dashboard } from './routes/dashboard.js';
 import { movimientos } from './routes/movimientos.js';
 
 const app = express();
@@ -13,6 +14,7 @@ app.get('/api/salud', (_req, res) => {
 });
 app.use('/api/movimientos', movimientos);
 app.use('/api/categorias', categorias);
+app.use('/api/dashboard', dashboard);
 
 // Express 5 envía aquí los errores de las rutas async
 const manejarError: ErrorRequestHandler = (error, _req, res, _next) => {
