@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  --color-marino: #1f3a5f;
+  --color-naranja: #e8912d;
+}
