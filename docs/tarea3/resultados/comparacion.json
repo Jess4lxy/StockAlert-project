@@ -1,0 +1,35 @@
+[
+  {
+    "escenario": "Primera página sin filtros",
+    "db_mediana_antes": 4.88,
+    "db_mediana_despues": 3.1,
+    "db_mejora_pct": 36.5,
+    "db_promedio_antes": 4.88,
+    "db_promedio_despues": 3.2,
+    "total_mediana_antes": 6.1,
+    "total_mediana_despues": 4.54,
+    "total_mejora_pct": 25.6
+  },
+  {
+    "escenario": "Búsqueda \"cuaderno\" + filtro salida",
+    "db_mediana_antes": 3.23,
+    "db_mediana_despues": 2.07,
+    "db_mejora_pct": 35.9,
+    "db_promedio_antes": 3.25,
+    "db_promedio_despues": 2.12,
+    "total_mediana_antes": 3.99,
+    "total_mediana_despues": 3.2,
+    "total_mejora_pct": 19.8
+  },
+  {
+    "escenario": "Filtro por categoría, página 10",
+    "db_mediana_antes": 4.45,
+    "db_mediana_despues": 2.94,
+    "db_mejora_pct": 33.9,
+    "db_promedio_antes": 4.49,
+    "db_promedio_despues": 3.04,
+    "total_mediana_antes": 5.29,
+    "total_mediana_despues": 3.74,
+    "total_mejora_pct": 29.3
+  }
+]
