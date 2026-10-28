@@ -91,6 +91,8 @@ La pantalla **Movimientos de inventario** permite buscar por nombre de producto,
 | `GET /api/categorias` | — | Lista de categorías para el filtro |
 | `GET /api/salud` | — | `{ ok: true }` |
 
+La interfaz está armada con componentes base reutilizables en [`frontend/src/components/ui`](frontend/src/components/ui) (`AppShell`, `PageHeader`, `FilterBar`, `FormField`, `TextInput`, `SelectInput`, `BaseButton`, `DataTable`, `TablePagination`, `StatusBadge`, `AppIcon`). Los colores y demás tokens están en `frontend/src/style.css`. Las pantallas viven en `frontend/src/views`.
+
 Los parámetros se envían a PostgreSQL como consultas parametrizadas (`$1`, `$2`…), nunca concatenados al SQL. Si el frontend corre en otro origen, se define `CORS_ORIGIN` en el `.env` (por defecto `http://localhost:5173`).
 
 ## Entregas

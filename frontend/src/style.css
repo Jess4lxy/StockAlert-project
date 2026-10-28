@@ -1,6 +1,37 @@
 @import "tailwindcss";
 
+/* Tokens de diseño de StockAlert: colores de la marca, superficies, texto y
+   estados. Los componentes de src/components/ui los usan como clases de Tailwind. */
 @theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Marca */
   --color-marino: #1f3a5f;
+  --color-marino-10: #e9eef5;
+  --color-marino-20: #c3cedd;
+  --color-marino-70: #172c48;
   --color-naranja: #e8912d;
+
+  /* Superficies y texto */
+  --color-fondo: #fafafa;
+  --color-fila: #f6f5f5;
+  --color-borde: #aab1c2;
+  --color-texto: #374151;
+  --color-texto-suave: #757575;
+
+  /* Estados */
+  --color-exito: #1c9850;
+  --color-exito-10: #d3f0df;
+  --color-info: #2664b8;
+  --color-info-10: #d5e4f8;
+  --color-alerta: #b79530;
+  --color-alerta-10: #f8f0d7;
+  --color-error: #b23f3f;
+  --color-error-10: #f7d8db;
+}
+
+@layer base {
+  body {
+    @apply bg-fondo font-sans text-sm text-texto;
+  }
 }
