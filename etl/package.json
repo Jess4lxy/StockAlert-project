@@ -1,0 +1,25 @@
+{
+  "name": "stockalert-etl",
+  "version": "1.0.0",
+  "private": true,
+  "description": "StockAlert - generación de datos sintéticos, limpieza y carga a PostgreSQL",
+  "type": "module",
+  "scripts": {
+    "generate": "tsx src/generate.ts",
+    "transform": "tsx src/transform.ts",
+    "load": "tsx src/load.ts",
+    "queries": "tsx src/queries.ts",
+    "etl": "npm run generate && npm run transform && npm run load && npm run queries",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.9",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

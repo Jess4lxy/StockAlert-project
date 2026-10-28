@@ -1,0 +1,51 @@
+id_producto,nombre,descripcion,categoria,stock_actual,stock_minimo,precio,fecha_actualizacion,estado
+1,Cuaderno profesional 100 hojas,,Papelería,81,14,59.00,2026-10-27T18:04:00-06:00,true
+2,Cuaderno francés 100 hojas,Cuaderno francés 100 hojas - papelería,PAPELERÍA,74,17,31.50,2026-10-27T13:51:00-06:00,true
+3,Lápiz HB,Lápiz HB - papelería,Papelería,74,19,145.00,2026-10-26T17:08:00-06:00,true
+4,Pluma azul,Pluma azul - papelería,papeleria,172,5,16.50,2026-10-21T20:45:00-06:00,true
+5,Pluma negra,,Papelería,44,13,25.00,2026-10-26T17:59:00-06:00,true
+6,Marcador permanente negro,Marcador permanente negro - papelería, Papelería  ,37,11,76.00,2026-10-11T08:07:00-06:00,true
+7,Marcador para pizarrón,,Papelería,55,16,5.50,2026-10-27T20:01:00-06:00,true
+8,Resistol en barra 20 g,Resistol en barra 20 g - papelería,Papelería,66,10,141.00,2026-10-18T18:03:00-06:00,true
+9,Folder tamaño carta,Folder tamaño carta - papelería,papeleria,156,24,139.00,2026-10-23T08:52:00-06:00,true
+10,Hojas blancas paquete 500,,papelería,5,10,77.50,2026-10-26T16:23:00-06:00,true
+11,Cinta adhesiva transparente,, Papelería  ,52,18,152.50,2026-10-26T17:19:00-06:00,true
+12,Tijeras escolares,,Papelería,134,24,19.00,2026-10-14T13:42:00-06:00,true
+13,borrador blanco,Borrador blanco - papelería,Papelería,56,12,140.50,2026-10-27T11:44:00-06:00,true
+14,Sacapuntas metálico,Sacapuntas metálico - papelería,Papelería,59,13,174.50,2026-10-27T13:12:00-06:00,true
+15,Regla 30 cm,Regla 30 cm - papelería,PAPELERÍA,44,18,69.00,2026-10-26T12:36:00-06:00,true
+16,corrector líquido,Corrector líquido - papelería, Papelería  ,59,25,37.00,2026-10-25T09:13:00-06:00,true
+17,Calculadora básica,,papeleria,58,22,53.00,2026-10-27T11:18:00-06:00,true
+18,Clips caja 100,Clips caja 100 - papelería,Papelería,15,8,$176.00,2026-10-27T18:33:00-06:00,true
+19,Grapas caja 1000,Grapas caja 1000 - papelería,Papelería,118,23,$139.50,2026-10-26T20:09:00-06:00,true
+20,Engrapadora estándar,, Papelería  ,93,14,93.00,2026-10-25T20:45:00-06:00,true
+21,Papel bond carta,,papelería,148,21,106.00,2026-10-27T19:13:00-06:00,true
+22,Cartulina blanca,,Papelería,85,25,70.50,2026-10-07T11:04:00-06:00,true
+23,plumones de colores 12 pzas,Plumones de colores 12 pzas - papelería,Papelería,27,8,19.00,2026-10-25T08:43:00-06:00,true
+24,Colores 24 pzas,,Papelería,61,24,35.50,2026-10-21T19:41:00-06:00,true
+25,Sobre manila carta,Sobre manila carta - papelería,papeleria,69,15,108.00,2026-10-27T15:20:00-06:00,true
+26,Arroz 1 kg,Arroz 1 kg - abarrotes,Abarrotes,96,24,$87.00,2026-10-25T10:26:00-06:00,true
+27,Frijol negro 1 kg,,ABARROTES,47,25,64.50,2026-10-25T19:45:00-06:00,true
+28,Azúcar 1 kg,Azúcar 1 kg - abarrotes,abarrotes,53,9,63.00,2026-10-26T09:12:00-06:00,true
+29,Aceite vegetal 1 L,Aceite vegetal 1 L - abarrotes,abarrotes,4,5,88.00,2026-10-23T19:06:00-06:00,true
+30,  Sal  de mesa 1 kg ,Sal de mesa 1 kg - abarrotes,Abarrotes,88,25,78.50,2026-10-27T15:39:00-06:00,true
+31,Harina de trigo 1 kg,Harina de trigo 1 kg - abarrotes,Abarrotes,44,25,90.00,2026-10-25T19:02:00-06:00,true
+32,Pasta para sopa 200 g,Pasta para sopa 200 g - abarrotes,abarrotes,57,14,15.00,2026-10-27T14:13:00-06:00,true
+33,Atún en lata 140 g,Atún en lata 140 g - abarrotes,ABARROTES,166,22,88.00,2026-10-27T18:42:00-06:00,true
+34,Café soluble 120 g,Café soluble 120 g - abarrotes,abarrotes,116,9,$23.00,2026-10-24T09:41:00-06:00,true
+35,leche entera 1 l,,abarrotes,98,25,$82.50,2026-10-22T10:35:00-06:00,true
+36,Huevo blanco 12 pzas,,Abarrotes,162,11,72.00,2026-10-19T18:07:00-06:00,true
+37,Mayonesa 390 g,Mayonesa 390 g - abarrotes,Abarrotes,20,9,63.00,2026-10-20T08:19:00-06:00,true
+38,Galletas marías 170 g,Galletas marías 170 g - abarrotes,Abarrotes,39,6,59.00,2026-10-24T13:42:00-06:00,true
+39,Avena 400 g,,abarrotes,36,18,63.50,2026-10-21T18:06:00-06:00,true
+40,  Chiles  en lata 220 g ,Chiles en lata 220 g - abarrotes,Abarrotes,9,9,40.50,2026-10-22T18:38:00-06:00,true
+41,Agua natural 1 L,Agua natural 1 L - bebidas,Bebidas,135,23,23.00,2026-10-25T12:56:00-06:00,true
+42,  Agua  natural 600 ml ,Agua natural 600 ml - bebidas,Bebidas,44,13,23.00,2026-10-26T20:03:00-06:00,true
+43,Refresco de cola 600 ml,,bebidas,19,22,$32.50,2026-10-27T17:05:00-06:00,true
+44,Refresco de cola 2 L,Refresco de cola 2 L - bebidas,Bebidas,50,12,18.50,2026-10-23T14:23:00-06:00,true
+45,Jugo de naranja 1 L,Jugo de naranja 1 L - bebidas,Bebidas,40,9,12.00,2026-10-19T12:34:00-06:00,true
+46,Bebida isotónica 600 ml,Bebida isotónica 600 ml - bebidas,Bebidas,163,25,15.00,2026-10-24T19:25:00-06:00,true
+47,Té helado 500 ml,Té helado 500 ml - bebidas,Bebidas,41,25,14.00,2026-10-27T13:30:00-06:00,true
+48,Agua mineral 355 ml,,BEBIDAS,115,8,21.00,2026-10-23T11:43:00-06:00,true
+49,  papas  fritas 45 g ,Papas fritas 45 g - botanas,botanas,57,6,17.00,2026-10-25T18:41:00-06:00,true
+50,Cacahuates japoneses 100 g,,botanas,116,17,26.50,2026-10-16T17:26:00-06:00,true

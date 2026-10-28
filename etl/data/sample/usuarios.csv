@@ -1,0 +1,9 @@
+id_usuario,nombre,correo,contrasena_hash,rol,fecha_registro,estado
+1,Mariana Canché Poot,mariana.canche@stockalert.test,sin-acceso,admin,2025-10-01T09:00:00-06:00,true
+2,Roberto Chan Uc,roberto.chan@stockalert.test,sin-acceso,admin,2025-10-02T09:00:00-06:00,true
+3,Daniela Pech Ek,daniela.pech@stockalert.test,sin-acceso,almacen,2025-10-03T09:00:00-06:00,true
+4,Luis Tun Cauich,luis.tun@stockalert.test,sin-acceso,almacen,2025-10-04T09:00:00-06:00,true
+5,Fernanda Dzul May,Fernanda.dzul@StockAlert.test,sin-acceso,almacen,2025-10-05T09:00:00-06:00,true
+6,Jorge Couoh Bacab,jorge.couoh@stockalert.test,sin-acceso,almacen,2025-10-06T09:00:00-06:00,true
+7,Karla Euan Noh,karla.euan@stockalert.test,sin-acceso,almacen,2025-10-07T09:00:00-06:00,true
+8,Miguel Balam Can,miguel.balam@stockalert.test,sin-acceso,almacen,2025-10-08T09:00:00-06:00,true
