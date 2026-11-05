@@ -47,6 +47,8 @@ export default defineConfig({
   // Rutas relativas: la app funciona en la raíz de un dominio o en una subcarpeta
   base: './',
   plugins: [vue(), tailwindcss(), precacheServiceWorker()],
+  // Permite abrir la versión compilada desde un túnel HTTPS de Cloudflare (la URL cambia en cada túnel)
+  preview: { allowedHosts: ['.trycloudflare.com'] },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
