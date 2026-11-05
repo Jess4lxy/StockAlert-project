@@ -13,6 +13,7 @@ if (!process.env.DATABASE_URL) {
 export const config = {
   databaseUrl: process.env.DATABASE_URL,
   port: Number(process.env.API_PORT ?? 3000),
-  // Origen del frontend de Vite en desarrollo
-  corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  // Orígenes del frontend, separados por coma: Vite en desarrollo y la versión
+  // compilada (vite preview), que es la que registra el Service Worker de la PWA
+  corsOrigin: (process.env.CORS_ORIGIN ?? 'http://localhost:5173,http://localhost:4173').split(','),
 };

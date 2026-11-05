@@ -9,7 +9,7 @@ Buenfil Yunes Julián Nahim · López Uicab Rossana Sofía · Martínez Rivero A
 
 | Capa | Tecnología |
 |---|---|
-| Frontend | Vue 3 + TypeScript + Vite + Tailwind CSS |
+| Frontend | Vue 3 + TypeScript + Vite + Tailwind CSS, instalable como PWA |
 | Backend | Node.js + Express |
 | Base de datos | PostgreSQL (local con Docker) |
 | ETL | Node.js + TypeScript |
@@ -83,13 +83,23 @@ cd backend && npm install && npm run dev     # API en http://localhost:3000/api
 cd frontend && npm install && npm run dev    # Web en http://localhost:5173
 ```
 
-La aplicación tiene dos pantallas: **Dashboard** (indicadores y gráficas, ver [Tarea 3](#dashboard-y-prueba-de-rendimiento-tarea-3)) y **Movimientos de inventario**.
+La aplicación tiene cuatro pantallas. La sección activa se guarda en el hash de la URL (`#/productos`):
 
-La pantalla **Movimientos de inventario** permite buscar por nombre de producto, filtrar por tipo y categoría y paginar (10, 20, 50 o 100 por página). La búsqueda, el filtro y la paginación se resuelven en PostgreSQL con `LIMIT`/`OFFSET`, así que el navegador solo descarga la página que muestra y nunca los 10,000 registros.
+| Pantalla | Qué muestra |
+|---|---|
+| **Dashboard** | Indicadores y gráficas, ver [Tarea 3](#dashboard-y-prueba-de-rendimiento-tarea-3) |
+| **Productos** | Catálogo con stock actual contra mínimo; primero los de mayor faltante. Búsqueda y filtros por estado de stock y categoría |
+| **Movimientos** | Entradas, salidas y ajustes, con búsqueda y filtros por tipo y categoría |
+| **Alertas** | Alertas de stock bajo o agotado, con filtros por estado y tipo, y totales de pendientes y registradas |
+
+La búsqueda, los filtros y la paginación (10, 20, 50 o 100 por página) se resuelven en PostgreSQL con `LIMIT`/`OFFSET`, así que el navegador solo descarga la página que muestra y nunca los 10,000 registros.
 
 | Endpoint | Parámetros | Respuesta |
 |---|---|---|
 | `GET /api/movimientos` | `q` (texto en el nombre del producto), `tipo` (`entrada`/`salida`/`ajuste`), `categoria`, `page`, `limit` (10/20/50/100) | `{ data, page, limit, total, totalPages }` |
+| `GET /api/productos` | `q`, `estado` (`reponer`/`bajo`/`agotado`/`ok`), `categoria`, `page`, `limit` | `{ data, page, limit, total, totalPages }` |
+| `GET /api/alertas` | `estado` (`pendiente`/`atendida`/`cerrada`), `tipo` (`stock_bajo`/`agotado`), `page`, `limit` | `{ data, page, limit, total, totalPages }` |
+| `GET /api/alertas/resumen` | — | `{ pendientes, total }` |
 | `GET /api/dashboard` | `meses` (3/6/12) | Indicadores, entradas/salidas por mes, ventas por categoría y productos por reponer |
 | `GET /api/categorias` | — | Lista de categorías para el filtro |
 | `GET /api/salud` | — | `{ ok: true }` |
@@ -98,7 +108,28 @@ La pantalla **Movimientos de inventario** permite buscar por nombre de producto,
 
 La interfaz está armada con componentes base reutilizables en [`frontend/src/components/ui`](frontend/src/components/ui) (`AppShell`, `PageHeader`, `FilterBar`, `FormField`, `TextInput`, `SelectInput`, `BaseButton`, `DataTable`, `TablePagination`, `StatusBadge`, `StatCard`, `ChartCard`, `AppIcon`) y gráficas en [`frontend/src/components/charts`](frontend/src/components/charts) (`LineChart`, `BarChart`, con Chart.js). Los colores y demás tokens están en `frontend/src/style.css`. Las pantallas viven en `frontend/src/views`.
 
-Los parámetros se envían a PostgreSQL como consultas parametrizadas (`$1`, `$2`…), nunca concatenados al SQL. Si el frontend corre en otro origen, se define `CORS_ORIGIN` en el `.env` (por defecto `http://localhost:5173`).
+Los parámetros se envían a PostgreSQL como consultas parametrizadas (`$1`, `$2`…), nunca concatenados al SQL. Si el frontend corre en otro origen, se define `CORS_ORIGIN` en el `.env`, con los orígenes separados por coma (por defecto `http://localhost:5173,http://localhost:4173`).
+
+## Aplicación instalable (PWA)
+
+El Service Worker solo se registra en la versión compilada. Con la API corriendo:
+
+```bash
+cd frontend
+npm run build
+npm run preview      # http://localhost:4173
+```
+
+La PWA se puede instalar únicamente desde `localhost` o desde una página con HTTPS. `npm run dev` sirve para programar la interfaz, pero ahí la app no es instalable ni funciona sin conexión.
+
+| Pieza | Dónde está | Qué hace |
+|---|---|---|
+| Manifest | [`frontend/public/manifest.json`](frontend/public/manifest.json) | Nombre, iconos, colores, modo `standalone` y accesos directos a Dashboard, Productos y Alertas |
+| Service Worker | [`frontend/public/sw.js`](frontend/public/sw.js) | Guarda la app al instalarse; [`vite.config.ts`](frontend/vite.config.ts) escribe la lista de archivos y la versión en cada `build` |
+| Instalación y avisos | [`usePwa.ts`](frontend/src/pwa/usePwa.ts), [`PwaAvisos.vue`](frontend/src/components/PwaAvisos.vue) | Botón **Instalar app**, indicador **Sin conexión**, aviso de versión nueva e instrucciones para iOS |
+| Fuentes e íconos | `@fontsource/inter`, [`AppIcon.vue`](frontend/src/components/ui/AppIcon.vue) | Incluidos en la app, ya no se descargan de Google Fonts |
+
+**Sin conexión:** la API se consulta con *red primero* y cada respuesta se guarda en el dispositivo. Al arrancar, la app también guarda la vista inicial de cada sección y los tres periodos del dashboard. Sin conexión se muestra lo último guardado. Una consulta que nunca se hizo (otra página o filtro) muestra un mensaje que lo explica. La app es de solo consulta, así que no hay cambios pendientes por sincronizar.
 
 ## Dashboard y prueba de rendimiento (Tarea 3)
 

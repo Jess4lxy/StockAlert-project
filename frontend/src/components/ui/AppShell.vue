@@ -1,20 +1,50 @@
 <script setup lang="ts">
 // Estructura general: barra superior con la marca y riel lateral de íconos
 // (en móvil el riel pasa a pestañas horizontales). El contenido va en el slot.
+// En la barra superior viven el botón "Instalar" y el indicador de conexión de la PWA.
+import { usePwa } from '@/pwa/usePwa';
 import AppIcon from './AppIcon.vue';
 import type { ItemNavegacion } from './types';
 
 defineProps<{ items: ItemNavegacion[] }>();
 const activo = defineModel<string>('active', { required: true });
+
+const { enLinea, instalada, puedeInstalar, instalar } = usePwa();
+const logo = `${import.meta.env.BASE_URL}favicon.svg`;
 </script>
 
 <template>
   <div class="flex min-h-screen flex-col">
-    <header class="sticky top-0 z-40 bg-marino text-white">
+    <header class="sticky top-0 z-40 bg-marino text-white" style="padding-top: env(safe-area-inset-top)">
       <div class="flex h-14 items-center gap-3 px-4 md:px-6">
-        <img src="/favicon.svg" alt="" class="h-8 w-8" />
+        <img :src="logo" alt="" class="h-8 w-8" />
         <span class="text-lg font-bold">Stock<span class="text-naranja">Alert</span></span>
-        <span class="ml-auto hidden text-sm text-white/70 sm:inline">Inventario inteligente para tu negocio</span>
+        <span class="ml-4 hidden text-sm text-white/70 md:inline">Inventario inteligente para tu negocio</span>
+
+        <div class="ml-auto flex items-center gap-2">
+          <span
+            v-if="!enLinea"
+            class="inline-flex items-center gap-1.5 rounded-full bg-alerta-10 px-3 py-1 text-xs font-semibold text-alerta"
+            role="status"
+          >
+            <AppIcon name="wifi_off" :size="16" />
+            Sin conexión
+          </span>
+          <span v-else-if="instalada" class="hidden items-center gap-1.5 text-xs text-white/70 sm:inline-flex">
+            <AppIcon name="check_circle" :size="16" />
+            App instalada
+          </span>
+
+          <button
+            v-if="puedeInstalar"
+            type="button"
+            class="inline-flex h-9 items-center gap-2 rounded-lg bg-naranja px-3 text-sm font-semibold text-white transition-colors hover:brightness-110"
+            @click="instalar"
+          >
+            <AppIcon name="download" :size="18" />
+            Instalar app
+          </button>
+        </div>
       </div>
     </header>
 
@@ -46,16 +76,17 @@ const activo = defineModel<string>('active', { required: true });
           v-for="item in items"
           :key="item.id"
           type="button"
-          class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-sm font-medium"
+          :aria-current="item.id === activo ? 'page' : undefined"
+          class="flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium sm:flex-row sm:gap-1.5 sm:rounded-full sm:py-2 sm:text-sm"
           :class="item.id === activo ? 'bg-marino-10 text-marino' : 'text-gray-700 hover:bg-gray-100'"
           @click="activo = item.id"
         >
-          <AppIcon :name="item.icon" :size="18" />
-          <span class="truncate">{{ item.label }}</span>
+          <AppIcon :name="item.icon" :size="20" />
+          <span class="max-w-full truncate">{{ item.label }}</span>
         </button>
       </nav>
 
-      <main class="min-w-0 flex-1 px-4 py-3 md:px-6">
+      <main class="min-w-0 flex-1 px-4 py-3 pb-24 md:px-6" style="padding-bottom: max(6rem, env(safe-area-inset-bottom))">
         <slot />
       </main>
     </div>

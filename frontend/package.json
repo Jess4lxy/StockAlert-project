@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "iconos": "python3 scripts/generar-iconos.py"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.5",
     "chart.js": "^4.6.1",
     "vue": "^3.5.44",
     "vue-chartjs": "^5.3.4"

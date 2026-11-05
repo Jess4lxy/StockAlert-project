@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { api, type Dashboard } from '@/api';
+import { api, mensajeDeError, type Dashboard } from '@/api';
 import BarChart from '@/components/charts/BarChart.vue';
 import LineChart from '@/components/charts/LineChart.vue';
 import { COLOR } from '@/components/charts/tema';
@@ -32,7 +32,7 @@ async function cargar() {
     datos.value = await api.dashboard(meses.value, controlador.signal);
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
-    error.value = 'No se pudo conectar con la API. ¿Está corriendo el backend?';
+    error.value = mensajeDeError();
   }
   cargando.value = false;
 }

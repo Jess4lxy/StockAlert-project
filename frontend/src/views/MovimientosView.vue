@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { api, type Movimiento, type Pagina, type TipoMovimiento } from '@/api';
+import { api, mensajeDeError, type Movimiento, type Pagina, type TipoMovimiento } from '@/api';
 import {
   BaseButton,
   DataTable,
@@ -33,7 +33,7 @@ async function cargar() {
     resultado.value = await api.movimientos({ ...filtros }, controlador.signal);
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
-    error.value = 'No se pudo conectar con la API. ¿Está corriendo el backend?';
+    error.value = mensajeDeError();
   }
   cargando.value = false;
 }
