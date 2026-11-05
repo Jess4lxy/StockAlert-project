@@ -47,8 +47,12 @@ export default defineConfig({
   // Rutas relativas: la app funciona en la raíz de un dominio o en una subcarpeta
   base: './',
   plugins: [vue(), tailwindcss(), precacheServiceWorker()],
-  // Permite abrir la versión compilada desde un túnel HTTPS de Cloudflare (la URL cambia en cada túnel)
-  preview: { allowedHosts: ['.trycloudflare.com'] },
+  preview: {
+    // Permite abrir la versión compilada desde un túnel HTTPS de Cloudflare (la URL cambia en cada túnel)
+    allowedHosts: ['.trycloudflare.com'],
+    // Con VITE_API_URL=/api la API se sirve por el mismo dominio: basta un túnel y no se necesita CORS
+    proxy: { '/api': 'http://localhost:3000' },
+  },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

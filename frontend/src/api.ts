@@ -74,7 +74,8 @@ export interface FiltrosAlertas {
 type Parametros = Record<string, string | number>;
 
 function construirUrl(ruta: string, params: Parametros = {}): string {
-  const url = new URL(`${API_URL}${ruta}`);
+  // El segundo argumento permite una VITE_API_URL relativa (/api), como la del túnel
+  const url = new URL(`${API_URL}${ruta}`, window.location.origin);
   for (const [clave, valor] of Object.entries(params)) {
     if (valor !== '') url.searchParams.set(clave, String(valor));
   }

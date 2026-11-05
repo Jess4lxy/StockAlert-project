@@ -129,6 +129,30 @@ La PWA se puede instalar únicamente desde `localhost` o desde una página con H
 | Instalación y avisos | [`usePwa.ts`](frontend/src/pwa/usePwa.ts), [`PwaAvisos.vue`](frontend/src/components/PwaAvisos.vue) | Botón **Instalar app**, indicador **Sin conexión**, aviso de versión nueva e instrucciones para iOS |
 | Fuentes e íconos | `@fontsource/inter`, [`AppIcon.vue`](frontend/src/components/ui/AppIcon.vue) | Incluidos en la app, ya no se descargan de Google Fonts |
 
+### Abrirla en el celular (HTTPS)
+
+Un solo túnel de Cloudflare basta: `vite preview` reenvía `/api` a la API local, así que no hay que configurar CORS ni otra URL. Requiere [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) (`winget install Cloudflare.cloudflared`). En PowerShell, cada bloque en su terminal:
+
+```powershell
+# 1. Base de datos (desde la raíz, con Docker Desktop abierto)
+docker compose up -d
+
+# 2. API
+cd backend
+npm run dev
+
+# 3. Web compilada para usar la API por el mismo dominio
+cd frontend
+$env:VITE_API_URL = "/api"
+npm run build
+npm run preview
+
+# 4. Túnel: imprime la URL https://...trycloudflare.com que se abre en el celular
+cloudflared tunnel --url http://localhost:4173
+```
+
+La URL cambia cada vez que se reinicia el túnel, y la app instalada queda ligada a la URL con la que se instaló. Cualquiera con la URL puede consultar la app mientras el túnel esté abierto. Para volver a compilar contra la API local, abre otra terminal, sin `VITE_API_URL` definida.
+
 **Sin conexión:** la API se consulta con *red primero* y cada respuesta se guarda en el dispositivo. Al arrancar, la app también guarda la vista inicial de cada sección y los tres periodos del dashboard. Sin conexión se muestra lo último guardado. Una consulta que nunca se hizo (otra página o filtro) muestra un mensaje que lo explica. La app es de solo consulta, así que no hay cambios pendientes por sincronizar.
 
 ## Dashboard y prueba de rendimiento (Tarea 3)
