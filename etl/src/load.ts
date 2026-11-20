@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { CLEAN_DIR, SCHEMA_FILE, databaseUrl } from './config.js';
+import { CLEAN_DIR, SCHEMA_FILE, conexion } from './config.js';
 import { readCsv, type Row } from './csv.js';
 
 const LOTE = 1000;
@@ -48,7 +48,7 @@ async function main() {
     throw new Error('No hay datos limpios. Ejecuta primero: npm run generate && npm run transform');
   }
 
-  const pool = new pg.Pool({ connectionString: databaseUrl() });
+  const pool = new pg.Pool(conexion());
   const client = await pool.connect();
   const inicio = performance.now();
   try {

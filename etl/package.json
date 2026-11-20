@@ -9,9 +9,10 @@
     "transform": "tsx src/transform.ts",
     "load": "tsx src/load.ts",
     "queries": "tsx src/queries.ts",
-    "etl": "npm run generate && npm run transform && npm run load && npm run queries",
+    "etl": "npm run generate && npm run transform && npm run load && npm run roles && npm run queries",
     "typecheck": "tsc --noEmit",
     "indices": "tsx src/indices.ts",
+    "roles": "tsx src/roles.ts",
     "bench": "tsx src/benchmark.ts",
     "bench:comparar": "tsx src/comparar.ts"
   },

@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import pg from 'pg';
-import { QUERIES_FILE, databaseUrl } from './config.js';
+import { QUERIES_FILE, conexion } from './config.js';
 
 function leerConsultas(): { titulo: string; sql: string }[] {
   const texto = fs.readFileSync(QUERIES_FILE, 'utf8');
@@ -17,7 +17,7 @@ function leerConsultas(): { titulo: string; sql: string }[] {
 }
 
 async function main() {
-  const client = new pg.Client({ connectionString: databaseUrl() });
+  const client = new pg.Client(conexion());
   await client.connect();
   try {
     const consultas = leerConsultas();

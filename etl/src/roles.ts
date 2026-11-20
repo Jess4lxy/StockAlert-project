@@ -1,0 +1,42 @@
+// Crea o actualiza el usuario de solo lectura con el que se conecta la API
+// (API_DB_USER / API_DB_PASSWORD del .env). La API solo consulta, así que no
+// necesita crear, modificar ni borrar nada: si alguien obtiene sus credenciales
+// no puede alterar los datos. Se puede ejecutar las veces que sea necesario;
+// también sirve para aplicar un cambio de contraseña de la API.
+
+import pg from 'pg';
+import { conexion, requerida } from './config.js';
+
+async function main() {
+  const usuario = requerida('API_DB_USER');
+  const contrasena = requerida('API_DB_PASSWORD');
+  const base = requerida('POSTGRES_DB');
+  if (usuario === requerida('POSTGRES_USER')) {
+    throw new Error('API_DB_USER debe ser distinto de POSTGRES_USER (el dueño de la base).');
+  }
+
+  const client = new pg.Client(conexion());
+  await client.connect();
+  try {
+    const rol = client.escapeIdentifier(usuario);
+    const { rowCount } = await client.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [usuario]);
+    // CREATE/ALTER ROLE no admiten parámetros ($1): la contraseña se escapa como literal
+    await client.query(
+      `${rowCount ? 'ALTER' : 'CREATE'} ROLE ${rol} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE ` +
+        `PASSWORD ${client.escapeLiteral(contrasena)}`,
+    );
+    await client.query(`GRANT CONNECT ON DATABASE ${client.escapeIdentifier(base)} TO ${rol}`);
+    await client.query(`GRANT USAGE ON SCHEMA public TO ${rol}`);
+    await client.query(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${rol}`);
+    // npm run load borra y recrea las tablas: con esto las nuevas también se pueden leer
+    await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${rol}`);
+    console.log(`Usuario ${usuario} ${rowCount ? 'actualizado' : 'creado'}: solo lectura (SELECT) en ${base}.`);
+  } finally {
+    await client.end();
+  }
+}
+
+main().catch((error) => {
+  console.error('Error al configurar el usuario de la API:', error.message);
+  process.exitCode = 1;
+});

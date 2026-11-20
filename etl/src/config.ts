@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import type pg from 'pg';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,10 +25,23 @@ export const TOTAL_MOVIMIENTOS = 10_000;
 // Zona horaria del negocio (Mérida, UTC-6 sin horario de verano)
 export const TZ_OFFSET = '-06:00';
 
-export function databaseUrl(): string {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error('Falta DATABASE_URL. Copia .env.example a .env en la raíz del repositorio.');
+// Conexión del ETL: usa el usuario dueño de la base (POSTGRES_USER), porque recrea
+// las tablas, carga los datos y crea índices y usuarios. Cada contraseña está una
+// sola vez en el .env y no hace falta escaparla en una URL.
+export function requerida(nombre: string): string {
+  const valor = process.env[nombre];
+  if (!valor) {
+    throw new Error(`Falta ${nombre} en el .env. Copia .env.example a .env en la raíz del repositorio.`);
   }
-  return url;
+  return valor;
+}
+
+export function conexion(): pg.ClientConfig {
+  return {
+    host: process.env.POSTGRES_HOST ?? 'localhost',
+    port: Number(process.env.POSTGRES_PORT ?? 5432),
+    database: requerida('POSTGRES_DB'),
+    user: requerida('POSTGRES_USER'),
+    password: requerida('POSTGRES_PASSWORD'),
+  };
 }

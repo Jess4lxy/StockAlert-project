@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 import { RESULTADOS_DIR, type Estadisticas } from './bench-comun.js';
-import { databaseUrl } from './config.js';
+import { conexion } from './config.js';
 
 const API_URL = process.env.BENCH_API_URL ?? `http://localhost:${process.env.API_PORT ?? 3000}/api`;
 const CALENTAMIENTO = 5; // corridas que no se cuentan (caché de PostgreSQL y de Node)
@@ -48,7 +48,7 @@ async function medir(query: string) {
 }
 
 async function indicesActuales(): Promise<string[]> {
-  const client = new pg.Client({ connectionString: databaseUrl() });
+  const client = new pg.Client(conexion());
   await client.connect();
   try {
     const { rows } = await client.query<{ indexname: string }>(

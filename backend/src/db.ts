@@ -6,4 +6,4 @@ pg.types.setTypeParser(pg.types.builtins.NUMERIC, Number);
 // BIGINT (id de movimientos y alertas) también como número: los valores caben de sobra
 pg.types.setTypeParser(pg.types.builtins.INT8, Number);
 
-export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
+export const pool = new pg.Pool({ ...config.db, max: 10 });

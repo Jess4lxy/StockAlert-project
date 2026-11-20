@@ -4,10 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { ROOT_DIR, databaseUrl } from './config.js';
+import { ROOT_DIR, conexion } from './config.js';
 
 async function main() {
-  const client = new pg.Client({ connectionString: databaseUrl() });
+  const client = new pg.Client(conexion());
   await client.connect();
   try {
     await client.query(fs.readFileSync(path.join(ROOT_DIR, 'db', 'indices.sql'), 'utf8'));

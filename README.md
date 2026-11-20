@@ -30,7 +30,7 @@ stockalert/
 
 Requisitos: Node.js 20+, Docker Desktop.
 
-1. Copiar `.env.example` a `.env` y cambiar la contraseña. **El archivo `.env` nunca se sube al repositorio.**
+1. Copiar `.env.example` a `.env` y llenar `POSTGRES_PASSWORD` y `API_DB_PASSWORD` con contraseñas aleatorias distintas (ver [Credenciales](#credenciales)). **El archivo `.env` nunca se sube al repositorio.**
 2. Levantar la base de datos y cargar los datos (secciones siguientes).
 3. Correr la API y la aplicación web (sección [Aplicación web](#aplicación-web)).
 
@@ -44,6 +44,25 @@ docker compose down       # lo detiene (los datos quedan en el volumen)
 docker compose down -v    # lo detiene y borra los datos
 ```
 
+### Credenciales
+
+La base tiene dos usuarios, cada uno con su contraseña en el `.env`:
+
+| Usuario | Variables | Lo usa | Permisos |
+|---|---|---|---|
+| Dueño de la base | `POSTGRES_USER`, `POSTGRES_PASSWORD` | ETL (`etl/`) | Crea y borra tablas, carga datos, crea índices y usuarios |
+| Solo lectura | `API_DB_USER`, `API_DB_PASSWORD` | API (`backend/`) | Solo `SELECT`: no puede insertar, modificar, borrar ni crear tablas |
+
+Para generar cada contraseña:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+- El puerto se publica solo en `127.0.0.1`: otras computadoras de la red no pueden conectarse a la base. Si el puerto 5432 ya lo ocupa otro PostgreSQL instalado en la computadora, se cambia `POSTGRES_PORT` en el `.env` (por ejemplo, a 5433).
+- `npm run etl` crea el usuario de solo lectura (paso `roles`). Para cambiar después su contraseña: se edita `API_DB_PASSWORD` y se corre `npm run roles` en `etl/`.
+- `POSTGRES_PASSWORD` solo se aplica cuando Docker crea la base por primera vez. Para cambiarla en una base ya creada, se edita en el `.env` y luego, con el contenedor encendido, se ejecuta `docker exec -it stockalert-db psql -U stockalert -d stockalert -c "\password stockalert"` y se escribe la misma contraseña. Otra opción es `docker compose down -v`, que borra la base, y volver a correr `npm run etl`.
+
 ## ETL (Tarea 2)
 
 El origen son **datos sintéticos**: un generador con semilla fija crea un negocio ficticio (8 usuarios, 93 productos de 8 categorías y 10,000 movimientos de entrada, salida y ajuste en 12 meses) simulando el stock movimiento por movimiento. Las alertas salen de esa misma simulación. No se usan datos personales reales.
@@ -51,7 +70,7 @@ El origen son **datos sintéticos**: un generador con semilla fija crea un negoc
 ```bash
 cd etl
 npm install
-npm run etl          # generate → transform → load → queries
+npm run etl          # generate → transform → load → roles → queries
 ```
 
 Cada paso también se puede correr por separado:
@@ -61,6 +80,7 @@ Cada paso también se puede correr por separado:
 | `npm run generate` | Genera los CSV crudos con errores intencionales: 450 filas extra (300 duplicadas y 150 con campos vacíos, tipos incorrectos o referencias inexistentes) y formatos mezclados | `etl/data/raw/` |
 | `npm run transform` | Detecta vacíos, duplicados y tipos incorrectos; normaliza fechas, tipo de movimiento, cantidades, categorías, nombres, precios y correos; cuenta corregidos y descartados | `etl/data/clean/`, `etl/output/reporte_transformacion.json` |
 | `npm run load` | Recrea el esquema y carga los CSV limpios en una transacción; muestra el conteo final | PostgreSQL |
+| `npm run roles` | Crea o actualiza el usuario de solo lectura de la API (`API_DB_USER`) con permiso `SELECT` sobre las tablas actuales y las que se creen después | PostgreSQL |
 | `npm run queries` | Ejecuta las consultas de [`etl/sql/consultas.sql`](etl/sql/consultas.sql) | Consola |
 
 Resultado de la transformación (siempre el mismo, por la semilla fija):
