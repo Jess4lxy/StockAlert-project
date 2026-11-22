@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "indices": "tsx src/indices.ts",
     "roles": "tsx src/roles.ts",
+    "migrar": "tsx src/migrar.ts",
     "plataforma": "tsx src/plataforma.ts",
     "bench": "tsx src/benchmark.ts",
     "bench:comparar": "tsx src/comparar.ts"

@@ -72,7 +72,10 @@ const cuerpoJsonVarios = (schema: string, examples: Record<string, { summary: st
   content: { 'application/json': { schema: ref(schema), examples } },
 });
 
-const noEncontradoRespuesta = (que: string) => errorRespuesta(`${que} no encontrado`, `${que} inexistente o de otra empresa`);
+// Mismo texto que noEncontrado() en errores.ts: "Producto no encontrado", "Solicitud no encontrada"
+const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud']);
+const noEncontradoRespuesta = (que: string, descripcion = `${que} inexistente o de otra empresa`) =>
+  errorRespuesta(`${que} no ${FEMENINOS.has(que) ? 'encontrada' : 'encontrado'}`, descripcion);
 
 const alcanceEmpresa = 'Solo ve datos de la empresa del usuario de la sesión.';
 
@@ -96,8 +99,38 @@ const ejemploSesionPlataforma = {
   empresa: null,
 };
 
+// Token de acceso de ejemplo: { fam: <familia de la sesión>, iat, exp (15 min después), sub: "1" }
+const ejemploDuenoNuevo = {
+  id_usuario: 12,
+  nombre: 'Guadalupe Dzib Chi',
+  correo: 'guadalupe.dzib@stockalert.test',
+  rol: 'admin',
+  empresa: { id_empresa: 4, nombre: 'Abarrotes Doña Lupita' },
+};
+
 const ejemploToken =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3OTU0MDAwMDAsImV4cCI6MTc5NTQ0MzIwMCwic3ViIjoiMSJ9.firma-de-ejemplo';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmYW0iOiIzZjZjMmE5ZS04YjFkLTRlNTctOWEwYy01ZDJmN2I4ZTFjNDQiLCJpYXQiOjE3OTU0MDAwMDAsImV4cCI6MTc5NTQwMDkwMCwic3ViIjoiMSJ9.firma-de-ejemplo';
+
+// Refresh token de ejemplo (32 bytes aleatorios en base64url)
+const ejemploRefresh = 'Zq7Jt0f3mXc9WbR2kLp8sNv4yHa6dUe1iZo5gTj0xCw';
+
+const EXPIRA_ACCESO = 15 * 60; // segundos (config.jwt.expiraSegundos)
+const EXPIRA_REFRESH = 30 * 24 * 60 * 60; // segundos (DIAS_REFRESH en auth/refresh.ts)
+
+// Respuesta de sesión: web recibe el refresh token en la cookie; móvil, en el JSON
+const sesionWeb = (usuario: unknown) => ({ token: ejemploToken, expira_en: EXPIRA_ACCESO, usuario });
+const sesionMovil = (usuario: unknown) => ({
+  ...sesionWeb(usuario),
+  refresh_token: ejemploRefresh,
+  refresh_expira_en: EXPIRA_REFRESH,
+});
+
+// 200/201 de login, registro y refresh, con el encabezado Set-Cookie (solo cliente web)
+const sesionRespuesta = (descripcion: string, examples: Record<string, { summary: string; value: unknown }>) => ({
+  description: descripcion,
+  headers: { 'Set-Cookie': { $ref: '#/components/headers/SetCookieRefresh' } },
+  content: { 'application/json': { schema: ref('SesionRespuesta'), examples } },
+});
 
 const ejemploEmpresa = {
   id_empresa: 1,
@@ -154,6 +187,22 @@ const ejemploMovimiento = {
   usuario: 'Miguel Balam Can',
 };
 
+const ejemploSolicitud = {
+  id_solicitud: 31,
+  id_producto: 10,
+  producto: 'Hojas blancas paquete 500',
+  categoria: 'Papelería',
+  stock_actual: 5,
+  stock_minimo: 10,
+  id_alerta: 209,
+  tipo_alerta: 'stock_bajo',
+  cantidad_sugerida: 15,
+  estado: 'pendiente',
+  notas: null,
+  fecha_creacion: '2026-11-22T17:40:15.000Z',
+  fecha_actualizacion: '2026-11-22T17:40:15.000Z',
+};
+
 const ejemploAlerta = {
   id_alerta: 208,
   id_producto: 43,
@@ -170,26 +219,33 @@ export const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'StockAlert API',
-    version: '2.0.0',
+    version: '2.1.0',
     description: [
       'API REST de **StockAlert**, inventario inteligente para pequeños negocios.',
       '',
       '**Sesión**',
-      '- Casi todos los endpoints exigen sesión: inicia sesión con `POST /auth/login` (o registra tu negocio con `POST /auth/registro`) y envía el token en el encabezado `Authorization: Bearer <token>`. En Swagger, usa el botón **Authorize**.',
-      '- El token dura **12 horas**. En cada petición se revisa que el usuario y su empresa sigan activos, así que desactivar a alguien o cambiarle el rol aplica de inmediato.',
-      '- Son públicos solo `GET /salud`, `POST /auth/login`, `POST /auth/registro`, `GET /docs` y `GET /openapi.json`.',
+      '- Casi todos los endpoints exigen sesión: inicia sesión con `POST /auth/login` (o registra tu negocio con `POST /auth/registro`) y envía el token de acceso en el encabezado `Authorization: Bearer <token>`. En Swagger, usa el botón **Authorize**.',
+      '- El **token de acceso** (JWT) dura **15 minutos** (`expira_en: 900`). Lo renueva el **refresh token**, que dura **30 días** y se cambia por uno nuevo en cada renovación (rotación).',
+      '- En cada petición se revisa que el usuario y su empresa sigan activos y que su sesión siga abierta, así que desactivar a alguien, cambiarle el rol o cerrar su sesión aplica de inmediato.',
+      '- Cada inicio de sesión abre una sesión para ese dispositivo. `POST /auth/logout` la cierra; cambiar la contraseña propia (`PATCH /auth/contrasena`) cierra las de los demás dispositivos; asignarle una contraseña a un usuario o desactivarlo (`PATCH /usuarios/{id}`) cierra las suyas.',
+      '- Son públicos (sin token de acceso) `GET /salud`, `POST /auth/login`, `POST /auth/registro`, `POST /auth/refresh`, `POST /auth/logout`, `GET /docs` y `GET /openapi.json`. `POST /integraciones/n8n/solicitudes` usa su propio token (`X-StockAlert-Token`).',
+      '',
+      '**Flujo del cliente**',
+      '- **Web** (`cliente: "web"`, por omisión): el refresh token llega en la cookie httpOnly `stockalert_refresh` (`Path=/api/auth`, `SameSite=Strict`, `Secure` en producción), que JavaScript no puede leer. Las peticiones a `/auth/*` deben usar `fetch(url, { credentials: "include" })` para que el navegador envíe y guarde la cookie (en desarrollo, el frontend y la API están en puertos distintos).',
+      '- **Móvil** (`cliente: "movil"`): el refresh token llega en el JSON (`refresh_token`, `refresh_expira_en`); la app lo guarda en su almacenamiento seguro y lo envía en el cuerpo de `/auth/refresh` y `/auth/logout`.',
+      '- Si cualquier endpoint que no sea de `/auth` responde **401**, llama **una vez** a `POST /auth/refresh` y repite la petición con el token nuevo. Si el refresh también responde 401, la sesión terminó: manda al usuario a iniciar sesión. Si responde **409**, otra pestaña acaba de renovar la sesión: reintenta el refresh una vez.',
       '',
       '**Roles**',
       '- `plataforma`: administradores de StockAlert. No pertenecen a ninguna empresa: crean y desactivan empresas y usuarios, pero **no tienen inventario** (los endpoints de inventario les responden 403).',
-      '- `admin`: dueño de una empresa. Administra los usuarios de su empresa, da de alta y edita productos, registra movimientos y atiende alertas.',
-      '- `almacen`: personal de almacén. Consulta el inventario, registra movimientos y atiende alertas.',
+      '- `admin`: dueño de una empresa. Administra los usuarios de su empresa, da de alta y edita productos, registra movimientos, atiende alertas y da seguimiento a las solicitudes de reposición.',
+      '- `almacen`: personal de almacén. Consulta el inventario, registra movimientos, atiende alertas y da seguimiento a las solicitudes de reposición.',
       '',
       '**Varias empresas**',
-      '- Cada empresa ve solo sus propios productos, movimientos, alertas, categorías, indicadores y usuarios. Un id de otra empresa responde 404, como si no existiera.',
+      '- Cada empresa ve solo sus propios productos, movimientos, alertas, solicitudes de reposición, categorías, indicadores y usuarios. Un id de otra empresa responde 404, como si no existiera.',
       '',
       '**Inventario**',
       '- El stock **solo cambia con movimientos** (`POST /movimientos`: entrada, salida o ajuste); no se edita en el producto. Cada movimiento actualiza el stock y genera o atiende alertas en la misma transacción.',
-      '- Al generarse una alerta se avisa a un flujo de n8n (ver la sección **Webhooks**: `alertaGenerada`).',
+      '- Al generarse una alerta se avisa a un flujo de n8n (ver la sección **Webhooks**: `alertaGenerada`). El flujo avisa por correo a los administradores y registra una **solicitud de reposición** con `POST /integraciones/n8n/solicitudes`; el equipo le da seguimiento en `/solicitudes`.',
       '- Nada se borra: productos, usuarios y empresas se desactivan (`estado: false`) y los movimientos se corrigen con un ajuste.',
       '',
       '**Formato**',
@@ -208,14 +264,16 @@ export const openapi = {
   ],
   security: [{ bearerAuth: [] }],
   tags: [
-    { name: 'Autenticación', description: 'Inicio de sesión, registro de negocios y cuenta propia' },
+    { name: 'Autenticación', description: 'Inicio, renovación y cierre de sesión, registro de negocios y cuenta propia' },
     { name: 'Empresas', description: 'Negocios que usan StockAlert (solo rol plataforma)' },
     { name: 'Usuarios', description: 'Cuentas de acceso (roles plataforma y admin)' },
     { name: 'Productos', description: 'Catálogo con stock actual contra mínimo' },
     { name: 'Movimientos', description: 'Entradas, salidas y ajustes de inventario' },
     { name: 'Alertas', description: 'Alertas de stock bajo o agotado' },
+    { name: 'Solicitudes de reposición', description: 'Pedidos sugeridos que registra n8n por cada alerta; el equipo les da seguimiento' },
     { name: 'Dashboard', description: 'Indicadores y datos de las gráficas' },
     { name: 'Catálogos', description: 'Listas para los filtros' },
+    { name: 'Integraciones', description: 'Endpoint y aviso para servicios externos (n8n), no para personas' },
     { name: 'Sistema', description: 'Estado del servicio y documentación' },
   ],
   paths: {
@@ -225,26 +283,33 @@ export const openapi = {
         tags: ['Autenticación'],
         summary: 'Iniciar sesión',
         description:
-          'Público. Recibe correo y contraseña y devuelve un token JWT (válido 12 horas) y los datos del usuario. ' +
+          'Público. Recibe correo y contraseña, abre una sesión para este dispositivo y devuelve el token de acceso (JWT, válido 15 minutos), ' +
+          'su duración en segundos (`expira_en`) y los datos del usuario.\n' +
+          '- `cliente: "web"` (por omisión): el refresh token (30 días) se entrega en la cookie httpOnly `stockalert_refresh` (encabezado `Set-Cookie`).\n' +
+          '- `cliente: "movil"`: el refresh token viene en el JSON (`refresh_token`, `refresh_expira_en`) y no se envía cookie.\n\n' +
           'El correo no distingue mayúsculas. Si el correo no existe o la contraseña no coincide, la respuesta es la misma (401) ' +
           'y tarda lo mismo, para no revelar qué correos están registrados.',
         operationId: 'iniciarSesion',
         security: [],
-        requestBody: cuerpoJson('LoginEntrada', { correo: 'mariana.canche@stockalert.test', contrasena: 'clave-segura-2026' }),
-        responses: {
-          200: {
-            description: 'Sesión iniciada',
-            content: {
-              'application/json': {
-                schema: ref('SesionRespuesta'),
-                examples: {
-                  admin: { summary: 'Dueño de la empresa demo', value: { token: ejemploToken, usuario: ejemploSesionAdmin } },
-                  plataforma: { summary: 'Administrador de la plataforma', value: { token: ejemploToken, usuario: ejemploSesionPlataforma } },
-                },
-              },
-            },
+        requestBody: cuerpoJsonVarios('LoginEntrada', {
+          web: { summary: 'Navegador (refresh token en cookie)', value: { correo: 'mariana.canche@stockalert.test', contrasena: 'clave-segura-2026' } },
+          movil: {
+            summary: 'App móvil (refresh token en el JSON)',
+            value: { correo: 'mariana.canche@stockalert.test', contrasena: 'clave-segura-2026', cliente: 'movil' },
           },
-          400: errorCuerpo('correo es obligatorio', 'correo no es un correo válido', 'contrasena es obligatorio'),
+        }),
+        responses: {
+          200: sesionRespuesta('Sesión iniciada', {
+            admin: { summary: 'Web: dueño de la empresa demo', value: sesionWeb(ejemploSesionAdmin) },
+            plataforma: { summary: 'Web: administrador de la plataforma', value: sesionWeb(ejemploSesionPlataforma) },
+            movil: { summary: 'Móvil: incluye el refresh token', value: sesionMovil(ejemploSesionAdmin) },
+          }),
+          400: errorCuerpo(
+            'correo es obligatorio',
+            'correo no es un correo válido',
+            'contrasena es obligatoria',
+            'cliente debe ser uno de: web, movil',
+          ),
           401: errorRespuesta('Correo o contraseña incorrectos', 'Correo o contraseña incorrectos'),
           403: errorRespuesta('La cuenta o su empresa están desactivadas', 'Credenciales correctas, pero la cuenta o su empresa están desactivadas'),
           500: error500,
@@ -256,7 +321,8 @@ export const openapi = {
         tags: ['Autenticación'],
         summary: 'Registrar un negocio',
         description:
-          'Público. Crea en una sola operación la empresa y su usuario administrador (rol `admin`, el dueño) y devuelve la sesión ya iniciada. ' +
+          'Público. Crea en una sola operación la empresa y su usuario administrador (rol `admin`, el dueño) y devuelve la sesión ya iniciada, ' +
+          'igual que `POST /auth/login` (incluido `cliente`: con `web` el refresh token va en la cookie; con `movil`, en el JSON). ' +
           'Después, el dueño da de alta a su personal con `POST /usuarios`.',
         operationId: 'registrarNegocio',
         security: [],
@@ -267,15 +333,9 @@ export const openapi = {
           contrasena: 'clave-segura-2026',
         }),
         responses: {
-          201: json('Empresa y administrador creados; sesión iniciada', ref('SesionRespuesta'), {
-            token: ejemploToken,
-            usuario: {
-              id_usuario: 12,
-              nombre: 'Guadalupe Dzib Chi',
-              correo: 'guadalupe.dzib@stockalert.test',
-              rol: 'admin',
-              empresa: { id_empresa: 4, nombre: 'Abarrotes Doña Lupita' },
-            },
+          201: sesionRespuesta('Empresa y administrador creados; sesión iniciada', {
+            web: { summary: 'Web (refresh token en la cookie)', value: sesionWeb(ejemploDuenoNuevo) },
+            movil: { summary: 'Móvil (refresh token en el JSON)', value: sesionMovil(ejemploDuenoNuevo) },
           }),
           400: errorCuerpo(
             'empresa es obligatorio',
@@ -283,8 +343,87 @@ export const openapi = {
             'nombre admite como máximo 100 caracteres',
             'correo no es un correo válido',
             'contrasena debe tener al menos 8 caracteres',
+            'cliente debe ser uno de: web, movil',
           ),
           409: errorRespuesta('Ya existe una cuenta con ese correo', 'El correo ya está registrado'),
+          500: error500,
+        },
+      },
+    },
+    '/auth/refresh': {
+      post: {
+        tags: ['Autenticación'],
+        summary: 'Renovar el token de acceso',
+        description:
+          'Público (no lleva `Authorization`). Cambia el refresh token por un token de acceso nuevo (15 minutos) y un refresh token nuevo (30 días): ' +
+          'el usado deja de servir (**rotación**). El refresh token se lee del cuerpo (`refresh_token`, app móvil) o, si no viene, ' +
+          'de la cookie `stockalert_refresh` (web; usa `credentials: "include"`).\n\n' +
+          'El refresh token nuevo se entrega igual que al iniciar sesión, según el tipo de cliente con que se abrió la sesión: ' +
+          'web en la cookie (`Set-Cookie`), móvil en el JSON.\n\n' +
+          'Seguridad de la rotación:\n' +
+          '- Si llega un token que ya se usó **hace menos de 30 segundos**, casi seguro son dos pestañas renovando a la vez: responde **409** sin revocar nada. ' +
+          'El cliente reintenta una vez (en web, la cookie ya trae el token nuevo).\n' +
+          '- Si llega un token ya reemplazado **más tarde**, alguien guardó una copia (posible robo): se cierra la sesión completa de ese dispositivo ' +
+          'y responde 401 (*Por seguridad se cerró la sesión…*).\n' +
+          '- Si la cuenta o su empresa se desactivaron, se cierra la sesión, se borra la cookie y responde 401.',
+        operationId: 'renovarSesion',
+        security: [{ cookieRefresh: [] }, {}],
+        requestBody: {
+          required: false,
+          description: 'Solo la app móvil. En web se omite: el refresh token viaja en la cookie.',
+          content: { 'application/json': { schema: ref('RefreshEntrada'), example: { refresh_token: ejemploRefresh } } },
+        },
+        responses: {
+          200: sesionRespuesta('Sesión renovada: token de acceso nuevo y refresh token nuevo', {
+            web: { summary: 'Web (refresh token nuevo en la cookie)', value: sesionWeb(ejemploSesionAdmin) },
+            movil: { summary: 'Móvil (refresh token nuevo en el JSON)', value: sesionMovil(ejemploSesionAdmin) },
+          }),
+          401: erroresRespuesta('Falta el refresh token, no existe, ya expiró, la sesión se cerró o la cuenta se desactivó: hay que iniciar sesión de nuevo', [
+            'Falta el refresh token. Inicia sesión de nuevo.',
+            'La sesión no es válida o ya expiró. Inicia sesión de nuevo.',
+            'Por seguridad se cerró la sesión: se usó un token de renovación que ya había sido reemplazado. Inicia sesión de nuevo.',
+            'La cuenta o su empresa están desactivadas',
+          ]),
+          403: errorRespuesta(
+            'La cuenta o su empresa están desactivadas',
+            'Caso poco común: la cuenta o su empresa se desactivaron justo entre la renovación y la respuesta',
+          ),
+          400: errorRespuesta('El cuerpo de la petición no es JSON válido', 'Se envió un cuerpo que no es JSON válido'),
+          409: errorRespuesta(
+            'La sesión se acaba de renovar en otra petición. Vuelve a intentarlo.',
+            'El mismo refresh token se renovó hace menos de 30 segundos (por ejemplo, dos pestañas a la vez). Reintenta una vez.',
+          ),
+          500: error500,
+        },
+      },
+    },
+    '/auth/logout': {
+      post: {
+        tags: ['Autenticación'],
+        summary: 'Cerrar sesión',
+        description:
+          'Público (no lleva `Authorization`). Cierra la sesión de este dispositivo: revoca el refresh token (cuerpo `refresh_token` en móvil, ' +
+          'o la cookie en web) y todos los de su misma sesión, y borra la cookie. El token de acceso de esa sesión deja de funcionar de inmediato.\n\n' +
+          'Responde 204 aunque no llegue token o ya no fuera válido: el resultado es el mismo.',
+        operationId: 'cerrarSesion',
+        security: [{ cookieRefresh: [] }, {}],
+        requestBody: {
+          required: false,
+          description: 'Solo la app móvil. En web se omite: el refresh token viaja en la cookie.',
+          content: { 'application/json': { schema: ref('RefreshEntrada'), example: { refresh_token: ejemploRefresh } } },
+        },
+        responses: {
+          204: {
+            description: 'Sesión cerrada (sin cuerpo). La cookie se borra.',
+            headers: {
+              'Set-Cookie': {
+                description: 'Borra la cookie del refresh token',
+                schema: { type: 'string' },
+                example: 'stockalert_refresh=; Path=/api/auth; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict',
+              },
+            },
+          },
+          400: errorRespuesta('El cuerpo de la petición no es JSON válido', 'Se envió un cuerpo que no es JSON válido'),
           500: error500,
         },
       },
@@ -318,14 +457,15 @@ export const openapi = {
         tags: ['Autenticación'],
         summary: 'Cambiar mi contraseña',
         description:
-          'Cualquier rol. Cambia la contraseña del usuario de la sesión; exige la actual. El token vigente sigue siendo válido.',
+          'Cualquier rol. Cambia la contraseña del usuario de la sesión; exige la actual. Cierra sus sesiones en **los demás dispositivos** ' +
+          '(sus refresh tokens dejan de servir y sus tokens de acceso fallan de inmediato); la sesión de este dispositivo sigue abierta.',
         operationId: 'cambiarContrasena',
         requestBody: cuerpoJson('CambioContrasenaEntrada', { actual: 'clave-segura-2026', nueva: 'otra-clave-segura-2026' }),
         responses: {
           204: { description: 'Contraseña cambiada (sin cuerpo)' },
           400: errorCuerpo(
             'La contraseña actual no es correcta',
-            'actual es obligatorio',
+            'actual es obligatoria',
             'nueva es obligatoria',
             'nueva debe tener al menos 8 caracteres',
             'nueva admite como máximo 128 caracteres',
@@ -570,7 +710,9 @@ export const openapi = {
           '- `contrasena` asigna una nueva contraseña sin pedir la anterior (para que el usuario cambie la suya existe `PATCH /auth/contrasena`).\n' +
           '- `rol` solo cambia entre `admin` y `almacen`: el rol `plataforma` no se asigna ni se quita.\n' +
           '- Nadie puede cambiar su propio rol ni desactivarse a sí mismo.\n' +
-          '- Con `estado: false` el usuario ya no puede iniciar sesión y su token deja de funcionar. No se borra porque sus movimientos lo referencian.',
+          '- Con `estado: false` el usuario ya no puede iniciar sesión y su token deja de funcionar. No se borra porque sus movimientos lo referencian.\n' +
+          '- Con `contrasena` o `estado: false` se cierran las sesiones del usuario en todos sus dispositivos (sus refresh tokens dejan de servir y sus tokens de acceso fallan de inmediato). ' +
+          'Si quien hace la petición se cambia su propia contraseña, su sesión actual sigue abierta.',
         operationId: 'editarUsuario',
         requestBody: cuerpoJsonVarios('UsuarioCambios', {
           rol: { summary: 'Cambiar el rol', value: { rol: 'admin' } },
@@ -999,6 +1141,105 @@ export const openapi = {
       },
     },
 
+    // ------------------------------------------------------------ Solicitudes de reposición
+    '/solicitudes': {
+      get: {
+        tags: ['Solicitudes de reposición'],
+        summary: 'Listar solicitudes de reposición',
+        description:
+          'Roles `admin` y `almacen`. ' + alcanceEmpresa + ' ' +
+          'Solicitudes que registró el flujo de n8n (una por alerta), de la más reciente a la más antigua, con el stock actual del producto.',
+        operationId: 'listarSolicitudes',
+        parameters: [
+          {
+            name: 'estado',
+            in: 'query',
+            description: 'Estado de la solicitud',
+            schema: ref('EstadoSolicitud'),
+          },
+          parametro('id_producto'),
+          parametro('page'),
+          parametro('limit'),
+        ],
+        responses: {
+          200: json('Página de solicitudes', ref('PaginaSolicitudes'), { data: [ejemploSolicitud], page: 1, limit: 20, total: 1, totalPages: 1 }),
+          400: erroresRespuesta('Parámetro con un valor no permitido', [
+            'estado debe ser uno de: pendiente, pedida, recibida, cancelada',
+            'id_producto debe ser un número entero positivo',
+          ]),
+          401: respuesta('NoAutenticado'),
+          403: respuesta('SinInventario'),
+          500: error500,
+        },
+      },
+    },
+    '/solicitudes/resumen': {
+      get: {
+        tags: ['Solicitudes de reposición'],
+        summary: 'Totales de solicitudes por estado',
+        description: 'Roles `admin` y `almacen`. ' + alcanceEmpresa + ' Número de solicitudes en cada estado (0 si no hay ninguna).',
+        operationId: 'resumenSolicitudes',
+        responses: {
+          200: json('Totales por estado', ref('ResumenSolicitudes'), { pendiente: 3, pedida: 1, recibida: 12, cancelada: 2 }),
+          401: respuesta('NoAutenticado'),
+          403: respuesta('SinInventario'),
+          500: error500,
+        },
+      },
+    },
+    '/solicitudes/{id}': {
+      parameters: [parametro('id')],
+      get: {
+        tags: ['Solicitudes de reposición'],
+        summary: 'Obtener una solicitud de reposición',
+        description: 'Roles `admin` y `almacen`. ' + alcanceEmpresa,
+        operationId: 'obtenerSolicitud',
+        responses: {
+          200: json('Solicitud', ref('Solicitud'), ejemploSolicitud),
+          401: respuesta('NoAutenticado'),
+          403: respuesta('SinInventario'),
+          404: respuesta('SolicitudNoEncontrada'),
+          500: error500,
+        },
+      },
+      patch: {
+        tags: ['Solicitudes de reposición'],
+        summary: 'Dar seguimiento a una solicitud',
+        description:
+          'Roles `admin` y `almacen`. Se envían solo los campos a cambiar; `fecha_actualizacion` toma la hora actual.\n' +
+          '- `estado`: `pendiente` → `pedida` (se hizo el pedido al proveedor) → `recibida`, o `cancelada`. No hay restricción de orden entre estados.\n' +
+          '- `cantidad_sugerida`: ajusta la cantidad a pedir.\n' +
+          '- `notas`: texto libre; se borra con `null` o `""`.\n\n' +
+          'Marcarla como `recibida` **no suma stock**: la mercancía se registra con un movimiento de entrada (`POST /movimientos`).',
+        operationId: 'editarSolicitud',
+        requestBody: cuerpoJsonVarios('SolicitudCambios', {
+          pedida: { summary: 'Se hizo el pedido', value: { estado: 'pedida', notas: 'Pedido 4471 al proveedor Papelera del Sureste' } },
+          cantidad: { summary: 'Ajustar la cantidad', value: { cantidad_sugerida: 24 } },
+          cancelar: { summary: 'Cancelar', value: { estado: 'cancelada', notas: null } },
+        }),
+        responses: {
+          200: json('Solicitud actualizada', ref('Solicitud'), {
+            ...ejemploSolicitud,
+            estado: 'pedida',
+            notas: 'Pedido 4471 al proveedor Papelera del Sureste',
+            fecha_actualizacion: '2026-11-22T18:05:00.000Z',
+          }),
+          400: errorCuerpo(
+            'Envía al menos un campo: estado, cantidad_sugerida o notas',
+            'estado debe ser uno de: pendiente, pedida, recibida, cancelada',
+            'cantidad_sugerida debe ser un número entero',
+            'cantidad_sugerida debe ser mayor o igual a 1',
+            'cantidad_sugerida debe ser menor o igual a 1000000',
+            'notas admite como máximo 1000 caracteres',
+          ),
+          401: respuesta('NoAutenticado'),
+          403: respuesta('ProhibidoInventario'),
+          404: respuesta('SolicitudNoEncontrada'),
+          500: error500,
+        },
+      },
+    },
+
     // ------------------------------------------------------------ Dashboard y catálogos
     '/dashboard': {
       get: {
@@ -1077,6 +1318,48 @@ export const openapi = {
       },
     },
 
+    // ------------------------------------------------------------ Integraciones
+    '/integraciones/n8n/solicitudes': {
+      post: {
+        tags: ['Integraciones'],
+        summary: 'Registrar la solicitud de reposición de una alerta (n8n)',
+        description:
+          'Para el flujo de n8n, no para personas: no usa el token de sesión. Se autentica con el encabezado `X-StockAlert-Token`, ' +
+          'el mismo valor (`N8N_WEBHOOK_TOKEN`) que la API envía en el aviso `alertaGenerada`.\n\n' +
+          'Crea la solicitud de reposición de la alerta indicada, en estado `pendiente`. Si no se envía `cantidad_sugerida`, se calcula con el stock ' +
+          'actual del producto: `max(1, 2 × stock_minimo − stock_actual)` (lo necesario para llegar al doble del mínimo).\n\n' +
+          '**Idempotente**: hay como máximo una solicitud por alerta. Si n8n reintenta, responde 200 con la solicitud que ya existía (sin cambiarla) ' +
+          'en lugar de duplicarla.',
+        operationId: 'registrarSolicitudN8n',
+        security: [{ tokenN8n: [] }],
+        requestBody: cuerpoJsonVarios('SolicitudN8nEntrada', {
+          sugerida: { summary: 'Con la cantidad del aviso', value: { id_alerta: 209, cantidad_sugerida: 15, notas: 'Aviso enviado a 1 administrador' } },
+          calculada: { summary: 'Solo la alerta (la API calcula la cantidad)', value: { id_alerta: 209 } },
+        }),
+        responses: {
+          201: json('Solicitud creada', ref('Solicitud'), { ...ejemploSolicitud, notas: 'Aviso enviado a 1 administrador' }),
+          200: json('La alerta ya tenía solicitud: se devuelve la existente, sin cambios', ref('Solicitud'), {
+            ...ejemploSolicitud,
+            notas: 'Aviso enviado a 1 administrador',
+          }),
+          400: errorCuerpo(
+            'id_alerta es obligatorio',
+            'id_alerta debe ser un número entero',
+            'cantidad_sugerida debe ser mayor o igual a 1',
+            'cantidad_sugerida debe ser menor o igual a 1000000',
+            'notas admite como máximo 1000 caracteres',
+          ),
+          401: errorRespuesta('X-StockAlert-Token inválido', 'Falta el encabezado X-StockAlert-Token o no coincide con N8N_WEBHOOK_TOKEN'),
+          404: noEncontradoRespuesta('Alerta', 'No existe una alerta con ese id_alerta'),
+          500: error500,
+          503: errorRespuesta(
+            'La integración con n8n no está configurada (falta N8N_WEBHOOK_TOKEN)',
+            'El servidor no tiene definido N8N_WEBHOOK_TOKEN: el endpoint está deshabilitado',
+          ),
+        },
+      },
+    },
+
     // ------------------------------------------------------------ Sistema
     '/salud': {
       get: {
@@ -1121,7 +1404,7 @@ export const openapi = {
   webhooks: {
     alertaGenerada: {
       post: {
-        tags: ['Alertas'],
+        tags: ['Integraciones'],
         summary: 'Aviso a n8n de una alerta nueva',
         description:
           'La API hace este `POST` a la URL configurada en `N8N_WEBHOOK_URL` cada vez que se genera una alerta (al registrar un movimiento, ' +
@@ -1129,7 +1412,11 @@ export const openapi = {
           '- Se envía después de confirmar la transacción, una vez por alerta.\n' +
           '- Si `N8N_WEBHOOK_TOKEN` está definido, va en el encabezado `X-StockAlert-Token` para que el flujo valide el origen.\n' +
           '- La API espera la respuesta **máximo 3 segundos**. Si n8n tarda más, falla o responde algo distinto de 2xx, solo se registra en el log: ' +
-          'la operación del usuario no se revierte y **no hay reintentos**. En `POST /movimientos` el resultado se refleja en `n8n_notificado`.',
+          'la operación del usuario no se revierte y **no hay reintentos**. En `POST /movimientos` el resultado se refleja en `n8n_notificado`.\n\n' +
+          'El cuerpo trae todo lo que el flujo necesita: la alerta, el producto (siempre con la misma forma, leído después del cambio), ' +
+          'la empresa con sus administradores activos (a quién avisar por correo) y la cantidad sugerida para reponer, ' +
+          '`max(1, 2 × stock_minimo − stock_actual)`. Con ello, el flujo avisa a los administradores y registra la solicitud de reposición ' +
+          'con `POST /integraciones/n8n/solicitudes` (enviando el mismo `X-StockAlert-Token`).',
         operationId: 'webhookAlertaGenerada',
         security: [],
         parameters: [
@@ -1150,8 +1437,9 @@ export const openapi = {
               example: {
                 evento: 'alerta.generada',
                 alerta: { ...ejemploAlertaGenerada, stock_detectado: 9 },
-                producto: { id_producto: 10, nombre: 'Hojas blancas paquete 500', categoria: 'Papelería', stock_actual: 9, stock_minimo: 10 },
-                empresa: EMPRESA_DEMO,
+                producto: { id_producto: 10, nombre: 'Hojas blancas paquete 500', categoria: 'Papelería', stock_actual: 9, stock_minimo: 10, faltante: 1 },
+                empresa: { ...EMPRESA_DEMO, admins: [{ nombre: ejemploSesionAdmin.nombre, correo: ejemploSesionAdmin.correo }] },
+                reposicion: { cantidad_sugerida: 11 },
               },
             },
           },
@@ -1169,15 +1457,45 @@ export const openapi = {
         scheme: 'bearer',
         bearerFormat: 'JWT',
         description:
-          'Token de `POST /auth/login` o `POST /auth/registro`, firmado con HS256. Dura 12 horas; al vencer, vuelve a iniciar sesión.',
+          'Token de acceso de `POST /auth/login`, `POST /auth/registro` o `POST /auth/refresh`, firmado con HS256. Dura **15 minutos**; ' +
+          'al vencer (401), pide otro con `POST /auth/refresh` y repite la petición. Deja de funcionar de inmediato si se cierra su sesión.',
+      },
+      cookieRefresh: {
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'stockalert_refresh',
+        description:
+          'Refresh token del cliente web (30 días), en una cookie httpOnly con `Path=/api/auth` y `SameSite=Strict` (`Secure` en producción). ' +
+          'La crean login, registro y refresh; el navegador la envía sola a `/auth/refresh` y `/auth/logout` si la petición usa ' +
+          '`credentials: "include"`. JavaScript no puede leerla. La app móvil no la usa: envía `refresh_token` en el cuerpo.',
+      },
+      tokenN8n: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-StockAlert-Token',
+        description:
+          'Token compartido con el flujo de n8n (variable `N8N_WEBHOOK_TOKEN` del servidor). Es el mismo que la API envía en el aviso `alertaGenerada`. ' +
+          'Si el servidor no lo tiene configurado, los endpoints de integración responden 503.',
+      },
+    },
+    headers: {
+      SetCookieRefresh: {
+        description:
+          'Solo cliente web: cookie httpOnly con el refresh token nuevo (30 días). El cliente móvil no la recibe: el token viene en el JSON.',
+        schema: { type: 'string' },
+        example: `stockalert_refresh=${ejemploRefresh}; Max-Age=2592000; Path=/api/auth; Expires=Tue, 22 Dec 2026 17:40:00 GMT; HttpOnly; Secure; SameSite=Strict`,
       },
     },
     responses: {
-      NoAutenticado: erroresRespuesta('Falta el token, no es válido, ya expiró o el usuario (o su empresa) fue desactivado', [
-        'Inicia sesión: falta el token (Authorization: Bearer <token>)',
-        'La sesión expiró o el token no es válido. Inicia sesión de nuevo.',
-        'El usuario ya no tiene acceso. Inicia sesión de nuevo.',
-      ]),
+      NoAutenticado: erroresRespuesta(
+        'Falta el token de acceso, no es válido, ya expiró, su sesión se cerró o el usuario (o su empresa) fue desactivado. ' +
+          'Pide un token nuevo con `POST /auth/refresh` (una vez) y repite la petición; si el refresh también responde 401, inicia sesión de nuevo.',
+        [
+          'Inicia sesión: falta el token (Authorization: Bearer <token>)',
+          'El token de acceso expiró o no es válido. Renuévalo con /api/auth/refresh.',
+          'El usuario ya no tiene acceso. Inicia sesión de nuevo.',
+        ],
+      ),
       SinPermiso: errorRespuesta('Tu rol no tiene permiso para esta acción', 'El rol del usuario no puede usar este endpoint'),
       SinInventario: errorRespuesta(
         'Los administradores de la plataforma no tienen inventario: inicia sesión con un usuario de la empresa',
@@ -1187,11 +1505,12 @@ export const openapi = {
         'Tu rol no tiene permiso para esta acción',
         'Los administradores de la plataforma no tienen inventario: inicia sesión con un usuario de la empresa',
       ]),
-      EmpresaNoEncontrada: errorRespuesta('Empresa no encontrada', 'Empresa inexistente'),
+      EmpresaNoEncontrada: noEncontradoRespuesta('Empresa', 'Empresa inexistente'),
       UsuarioNoEncontrado: noEncontradoRespuesta('Usuario'),
       ProductoNoEncontrado: noEncontradoRespuesta('Producto'),
       MovimientoNoEncontrado: noEncontradoRespuesta('Movimiento'),
-      AlertaNoEncontrada: errorRespuesta('Alerta no encontrada', 'Alerta inexistente o de otra empresa'),
+      AlertaNoEncontrada: noEncontradoRespuesta('Alerta'),
+      SolicitudNoEncontrada: noEncontradoRespuesta('Solicitud'),
     },
     parameters: {
       id: {
@@ -1261,10 +1580,25 @@ export const openapi = {
       },
       SesionRespuesta: {
         type: 'object',
-        required: ['token', 'usuario'],
+        required: ['token', 'expira_en', 'usuario'],
         properties: {
-          token: { type: 'string', description: 'JWT para el encabezado `Authorization: Bearer <token>`; dura 12 horas' },
+          token: { type: 'string', description: 'Token de acceso (JWT) para el encabezado `Authorization: Bearer <token>`; dura 15 minutos' },
+          expira_en: { type: 'integer', const: 900, description: 'Segundos de vida del token de acceso' },
           usuario: ref('UsuarioSesion'),
+          refresh_token: {
+            type: 'string',
+            description: 'Solo cliente `movil`: refresh token para `POST /auth/refresh` y `POST /auth/logout`. Guárdalo en almacenamiento seguro. En web va en la cookie.',
+          },
+          refresh_expira_en: { type: 'integer', const: 2592000, description: 'Solo cliente `movil`: segundos de vida del refresh token (30 días)' },
+        },
+      },
+      RefreshEntrada: {
+        type: 'object',
+        properties: {
+          refresh_token: {
+            type: 'string',
+            description: 'Refresh token de la app móvil. Si no se envía, se usa la cookie `stockalert_refresh` (web).',
+          },
         },
       },
       LoginEntrada: {
@@ -1273,6 +1607,12 @@ export const openapi = {
         properties: {
           correo: { type: 'string', format: 'email', maxLength: 150, description: 'Sin distinguir mayúsculas' },
           contrasena: { type: 'string', maxLength: 128 },
+          cliente: {
+            type: 'string',
+            enum: ['web', 'movil'],
+            default: 'web',
+            description: '`web`: refresh token en la cookie httpOnly · `movil`: refresh token en el JSON de la respuesta',
+          },
         },
       },
       RegistroEntrada: {
@@ -1283,6 +1623,12 @@ export const openapi = {
           nombre: { type: 'string', minLength: 2, maxLength: 100, description: 'Nombre del dueño' },
           correo: { type: 'string', format: 'email', maxLength: 150, description: 'Se guarda en minúsculas; no puede estar registrado' },
           contrasena: { type: 'string', minLength: 8, maxLength: 128 },
+          cliente: {
+            type: 'string',
+            enum: ['web', 'movil'],
+            default: 'web',
+            description: '`web`: refresh token en la cookie httpOnly · `movil`: refresh token en el JSON de la respuesta',
+          },
         },
       },
       CambioContrasenaEntrada: {
@@ -1568,29 +1914,127 @@ export const openapi = {
       },
       WebhookAlertaGenerada: {
         type: 'object',
-        required: ['evento', 'alerta', 'producto', 'empresa'],
+        required: ['evento', 'alerta', 'producto', 'empresa', 'reposicion'],
         properties: {
           evento: { type: 'string', const: 'alerta.generada' },
           alerta: ref('AlertaGenerada'),
           producto: {
             type: 'object',
-            description:
-              'Producto con su stock después del cambio. Cuando el aviso viene de dar de alta o editar un producto, ' +
-              'trae además los demás campos de `Producto` (descripcion, precio, estado, estado_stock, fecha_actualizacion).',
-            required: ['id_producto', 'nombre', 'categoria', 'stock_actual', 'stock_minimo'],
+            description: 'Producto con su stock después del cambio (siempre con esta forma)',
+            required: ['id_producto', 'nombre', 'categoria', 'stock_actual', 'stock_minimo', 'faltante'],
             properties: {
               id_producto: { type: 'integer' },
               nombre: { type: 'string' },
               categoria: { type: ['string', 'null'] },
               stock_actual: { type: 'integer', minimum: 0 },
               stock_minimo: { type: 'integer', minimum: 0 },
+              faltante: { type: 'integer', description: 'stock_minimo − stock_actual' },
             },
           },
           empresa: {
             type: 'object',
-            required: ['id_empresa', 'nombre'],
-            properties: { id_empresa: { type: 'integer' }, nombre: { type: 'string' } },
+            required: ['id_empresa', 'nombre', 'admins'],
+            properties: {
+              id_empresa: { type: 'integer' },
+              nombre: { type: 'string' },
+              admins: {
+                type: 'array',
+                description: 'Usuarios activos con rol admin de la empresa (a quién avisar), en orden alfabético; vacío si no hay',
+                items: {
+                  type: 'object',
+                  required: ['nombre', 'correo'],
+                  properties: { nombre: { type: 'string' }, correo: { type: 'string', format: 'email' } },
+                },
+              },
+            },
           },
+          reposicion: {
+            type: 'object',
+            required: ['cantidad_sugerida'],
+            properties: {
+              cantidad_sugerida: {
+                type: 'integer',
+                minimum: 1,
+                description: 'Unidades a pedir para llegar al doble del mínimo: max(1, 2 × stock_minimo − stock_actual)',
+              },
+            },
+          },
+        },
+      },
+
+      // ---- Solicitudes de reposición
+      EstadoSolicitud: {
+        type: 'string',
+        enum: ['pendiente', 'pedida', 'recibida', 'cancelada'],
+        description:
+          '`pendiente`: recién registrada · `pedida`: se hizo el pedido al proveedor · `recibida`: llegó la mercancía (se registra aparte con un movimiento de entrada) · `cancelada`: no se repondrá',
+      },
+      Solicitud: {
+        type: 'object',
+        required: [
+          'id_solicitud',
+          'id_producto',
+          'producto',
+          'categoria',
+          'stock_actual',
+          'stock_minimo',
+          'id_alerta',
+          'tipo_alerta',
+          'cantidad_sugerida',
+          'estado',
+          'notas',
+          'fecha_creacion',
+          'fecha_actualizacion',
+        ],
+        properties: {
+          id_solicitud: { type: 'integer' },
+          id_producto: { type: 'integer' },
+          producto: { type: 'string', description: 'Nombre del producto' },
+          categoria: { type: ['string', 'null'] },
+          stock_actual: { type: 'integer', minimum: 0, description: 'Stock actual del producto (no el del momento de la alerta)' },
+          stock_minimo: { type: 'integer', minimum: 0 },
+          id_alerta: { type: ['integer', 'null'], description: 'Alerta que originó la solicitud' },
+          tipo_alerta: { type: ['string', 'null'], enum: ['stock_bajo', 'agotado', null], description: 'Tipo de la alerta de origen' },
+          cantidad_sugerida: { type: 'integer', minimum: 1 },
+          estado: ref('EstadoSolicitud'),
+          notas: { type: ['string', 'null'] },
+          fecha_creacion: { type: 'string', format: 'date-time' },
+          fecha_actualizacion: { type: 'string', format: 'date-time', description: 'Último cambio con PATCH' },
+        },
+      },
+      SolicitudCambios: {
+        type: 'object',
+        minProperties: 1,
+        description: 'Al menos un campo',
+        properties: {
+          estado: ref('EstadoSolicitud'),
+          cantidad_sugerida: { type: 'integer', minimum: 1, maximum: 1000000 },
+          notas: { type: ['string', 'null'], maxLength: 1000, description: 'null o "" las borra' },
+        },
+      },
+      SolicitudN8nEntrada: {
+        type: 'object',
+        required: ['id_alerta'],
+        properties: {
+          id_alerta: { type: 'integer', minimum: 1, description: 'Alerta del aviso `alertaGenerada`' },
+          cantidad_sugerida: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 1000000,
+            description: 'Opcional; si falta: max(1, 2 × stock_minimo − stock_actual) con el stock actual del producto',
+          },
+          notas: { type: ['string', 'null'], maxLength: 1000 },
+        },
+      },
+      ResumenSolicitudes: {
+        type: 'object',
+        description: 'Número de solicitudes de la empresa en cada estado',
+        required: ['pendiente', 'pedida', 'recibida', 'cancelada'],
+        properties: {
+          pendiente: { type: 'integer', minimum: 0 },
+          pedida: { type: 'integer', minimum: 0 },
+          recibida: { type: 'integer', minimum: 0 },
+          cancelada: { type: 'integer', minimum: 0 },
         },
       },
 
@@ -1691,6 +2135,7 @@ export const openapi = {
       PaginaProductos: paginaDe('Producto'),
       PaginaMovimientos: paginaDe('Movimiento'),
       PaginaAlertas: paginaDe('Alerta'),
+      PaginaSolicitudes: paginaDe('Solicitud'),
       Error: {
         type: 'object',
         required: ['error'],

@@ -13,7 +13,7 @@ import ProductosView from '@/views/ProductosView.vue';
 import RegistroView from '@/views/RegistroView.vue';
 import UsuariosView from '@/views/UsuariosView.vue';
 
-const { usuario, cerrarSesion, revisarSesion } = useSesion();
+const { usuario, token, cerrarSesion, revisarSesion } = useSesion();
 
 const INVENTARIO: ItemNavegacion[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'space_dashboard' },
@@ -73,12 +73,13 @@ function ir(destino: string) {
   window.scrollTo({ top: 0 });
 }
 
-// Al entrar (o al cambiar de cuenta) se guarda la vista inicial de cada sección para
-// usarla sin conexión; la plataforma no tiene inventario que guardar
+// Cuando la sesión obtiene su token (al entrar, al cambiar de cuenta o al abrir la app)
+// se guarda la vista inicial de cada sección para usarla sin conexión. No se repite en
+// cada renovación del token. La plataforma no tiene inventario que guardar.
 watch(
-  () => usuario.value?.id_usuario,
-  (id) => {
-    if (id && usuario.value?.empresa) guardarDatosSinConexion();
+  () => [usuario.value?.id_usuario, !!token.value] as const,
+  ([id, conToken]) => {
+    if (id && conToken && usuario.value?.empresa) guardarDatosSinConexion();
   },
   { immediate: true },
 );

@@ -111,7 +111,7 @@ productos.post('/', permitir('admin'), async (req, res) => {
   }
 
   const producto = await buscar(idEmpresa, id);
-  if (alerta) await notificarN8n(alerta, producto, s.empresa!);
+  if (alerta) await notificarN8n(alerta, idEmpresa);
   res.status(201).json({ ...producto, alerta_generada: alerta });
 });
 
@@ -161,7 +161,7 @@ productos.patch('/:id', permitir('admin'), async (req, res) => {
   }
 
   const producto = await buscar(idEmpresa, id);
-  if (alerta) await notificarN8n(alerta, producto, s.empresa!);
+  if (alerta) await notificarN8n(alerta, idEmpresa);
   res.json({ ...producto, alerta_generada: alerta });
 });
 

@@ -7,6 +7,7 @@
 
 import type pg from 'pg';
 import { config } from './config.js';
+import { pool } from './db.js';
 
 export interface AlertaGenerada {
   id_alerta: number;
@@ -57,23 +58,58 @@ export async function evaluarAlertas(
   return { generada: rows[0], atendidas: 0 };
 }
 
+// Cantidad que conviene pedir: lo necesario para llegar al doble del mínimo (así no
+// vuelve a quedar por debajo con la siguiente venta). Siempre al menos 1.
+export function cantidadSugerida(stockActual: number, stockMinimo: number): number {
+  return Math.max(1, stockMinimo * 2 - stockActual);
+}
+
+// Datos completos del aviso: el producto siempre con la misma forma, la empresa con sus
+// administradores activos (a quién avisar) y la cantidad sugerida para reponer
+async function datosDelAviso(idProducto: number, idEmpresa: number) {
+  const [producto, empresa] = await Promise.all([
+    pool.query<{ id_producto: number; nombre: string; categoria: string | null; stock_actual: number; stock_minimo: number; faltante: number }>(
+      `SELECT id_producto, nombre, categoria, stock_actual, stock_minimo, stock_minimo - stock_actual AS faltante
+       FROM productos WHERE id_producto = $1`,
+      [idProducto],
+    ),
+    pool.query<{ id_empresa: number; nombre: string; admins: { nombre: string; correo: string }[] }>(
+      `SELECT e.id_empresa, e.nombre,
+              coalesce(json_agg(json_build_object('nombre', u.nombre, 'correo', u.correo) ORDER BY u.nombre)
+                       FILTER (WHERE u.id_usuario IS NOT NULL), '[]') AS admins
+       FROM empresas e
+       LEFT JOIN usuarios u ON u.id_empresa = e.id_empresa AND u.rol = 'admin' AND u.estado
+       WHERE e.id_empresa = $1
+       GROUP BY e.id_empresa, e.nombre`,
+      [idEmpresa],
+    ),
+  ]);
+  return { producto: producto.rows[0], empresa: empresa.rows[0] };
+}
+
 // Aviso a n8n después de confirmar la transacción. Se espera la respuesta (máximo
 // 3 s) porque en Vercel la función puede congelarse al responder; si n8n falla,
 // la operación del usuario no se revierte: solo se registra en el log.
-export async function notificarN8n(
-  alerta: AlertaGenerada,
-  producto: { id_producto: number; nombre: string; categoria: string | null; stock_actual: number; stock_minimo: number },
-  empresa: { id_empresa: number; nombre: string },
-): Promise<boolean> {
+// Cuerpo: { evento, alerta, producto, empresa: { ..., admins }, reposicion: { cantidad_sugerida } }.
+// Con él, el flujo avisa por correo a los admins y registra la solicitud de reposición
+// con POST /api/integraciones/n8n/solicitudes.
+export async function notificarN8n(alerta: AlertaGenerada, idEmpresa: number): Promise<boolean> {
   if (!config.n8n.url) return false;
   try {
+    const { producto, empresa } = await datosDelAviso(alerta.id_producto, idEmpresa);
     const res = await fetch(config.n8n.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(config.n8n.token ? { 'X-StockAlert-Token': config.n8n.token } : {}),
       },
-      body: JSON.stringify({ evento: 'alerta.generada', alerta, producto, empresa }),
+      body: JSON.stringify({
+        evento: 'alerta.generada',
+        alerta,
+        producto,
+        empresa,
+        reposicion: { cantidad_sugerida: cantidadSugerida(producto.stock_actual, producto.stock_minimo) },
+      }),
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) console.error(`n8n respondió ${res.status} al avisar la alerta ${alerta.id_alerta}`);

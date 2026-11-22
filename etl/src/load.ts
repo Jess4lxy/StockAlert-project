@@ -7,6 +7,7 @@ import path from 'node:path';
 import pg from 'pg';
 import { CLEAN_DIR, SCHEMA_FILE, conexion } from './config.js';
 import { readCsv, type Row } from './csv.js';
+import { aplicarMigraciones } from './migrar.js';
 
 const LOTE = 1000;
 
@@ -68,6 +69,8 @@ async function main() {
       await client.query(`SELECT setval(pg_get_serial_sequence('${tabla}', '${id}'), (SELECT max(${id}) FROM ${tabla}))`);
     }
 
+    // Tablas que se agregaron después del esquema base (sesiones, solicitudes...)
+    await aplicarMigraciones(client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

@@ -83,8 +83,11 @@ export interface UsuarioSesion {
   empresa: { id_empresa: number; nombre: string } | null;
 }
 
+// Respuesta de login, registro y refresh. El refresh token de la web viaja en una
+// cookie httpOnly (no aparece aquí); la app móvil lo pide con cliente: "movil".
 export interface Sesion {
   token: string;
+  expira_en: number;
   usuario: UsuarioSesion;
 }
 
@@ -136,12 +139,47 @@ export class ErrorApi extends Error {
   }
 }
 
-// Sesión: sesion.ts guarda aquí el token y qué hacer si la API lo rechaza (401)
+// Sesión: sesion.ts guarda aquí el token de acceso (solo en memoria, dura 15 min) y qué
+// hacer con un token renovado o con una sesión que ya no se puede renovar
 let token: string | null = null;
+let alRenovar: ((sesion: Sesion) => void) | null = null;
 let alRechazarSesion: (() => void) | null = null;
-export function configurarSesion(nuevo: string | null, alRechazar?: () => void) {
+export function configurarSesion(nuevo: string | null, eventos?: { alRenovar: (s: Sesion) => void; alRechazar: () => void }) {
   token = nuevo;
-  if (alRechazar) alRechazarSesion = alRechazar;
+  if (eventos) {
+    alRenovar = eventos.alRenovar;
+    alRechazarSesion = eventos.alRechazar;
+  }
+}
+
+// Pide un token de acceso nuevo con el refresh token de la cookie. Si varias peticiones
+// reciben 401 a la vez, comparten un solo refresco (el refresh token se rota en cada uso).
+let refrescando: Promise<Sesion | null> | null = null;
+export function refrescarSesion(): Promise<Sesion | null> {
+  refrescando ??= (async () => {
+    try {
+      for (let intento = 0; intento < 2; intento++) {
+        const res = await fetch(construirUrl('/auth/refresh'), { method: 'POST', credentials: 'include' });
+        // 409: otra pestaña acaba de renovar la sesión; la cookie ya trae el token nuevo
+        if (res.status === 409 && intento === 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) alRechazarSesion?.();
+          return null;
+        }
+        const sesion = (await res.json()) as Sesion;
+        token = sesion.token;
+        alRenovar?.(sesion);
+        return sesion;
+      }
+      return null;
+    } finally {
+      refrescando = null;
+    }
+  })();
+  return refrescando;
 }
 
 function construirUrl(ruta: string, params: Parametros = {}): string {
@@ -153,20 +191,30 @@ function construirUrl(ruta: string, params: Parametros = {}): string {
   return url.href;
 }
 
-async function pedir<T>(metodo: string, ruta: string, opciones: { params?: Parametros; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+async function pedir<T>(
+  metodo: string,
+  ruta: string,
+  opciones: { params?: Parametros; body?: unknown; signal?: AbortSignal } = {},
+  reintento = false,
+): Promise<T> {
+  const deSesion = ruta.startsWith('/auth/');
   const res = await fetch(construirUrl(ruta, opciones.params), {
     method: metodo,
     signal: opciones.signal,
+    // La cookie del refresh token solo la necesitan las rutas de sesión
+    credentials: deSesion ? 'include' : 'same-origin',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(opciones.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: opciones.body !== undefined ? JSON.stringify(opciones.body) : undefined,
   });
+  // Token de acceso vencido (o aún no pedido al abrir la app): se renueva una vez y se reintenta
+  if (res.status === 401 && !deSesion && !reintento && (await refrescarSesion())) {
+    return pedir<T>(metodo, ruta, opciones, true);
+  }
   if (!res.ok) {
     const datos = await res.json().catch(() => null);
-    // Un 401 con sesión abierta significa que expiró o la desactivaron
-    if (res.status === 401 && token && !ruta.startsWith('/auth/')) alRechazarSesion?.();
     throw new ErrorApi(res.status, datos?.error ?? `Error ${res.status} al consultar ${ruta}`);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
@@ -201,6 +249,7 @@ export const api = {
   registro: (datos: { empresa: string; nombre: string; correo: string; contrasena: string }) =>
     pedir<Sesion>('POST', '/auth/registro', { body: datos }),
   yo: () => get<UsuarioSesion>('/auth/yo'),
+  logout: () => pedir<void>('POST', '/auth/logout'),
 
   // Inventario de la empresa
   movimientos: (filtros: FiltrosMovimientos, signal?: AbortSignal) =>

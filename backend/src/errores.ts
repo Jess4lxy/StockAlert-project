@@ -12,7 +12,8 @@ export class HttpError extends Error {
 }
 
 // "Producto no encontrado", "Alerta no encontrada": concuerda con el género del sustantivo
-export const noEncontrado = (que: string) => new HttpError(404, `${que} no ${que.endsWith('a') ? 'encontrada' : 'encontrado'}`);
+const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud']);
+export const noEncontrado = (que: string) => new HttpError(404, `${que} no ${FEMENINOS.has(que) ? 'encontrada' : 'encontrado'}`);
 
 // Errores de PostgreSQL que provienen de datos del cliente (no son fallas del servidor)
 const ERRORES_PG: Record<string, [number, string]> = {

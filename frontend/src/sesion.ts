@@ -1,47 +1,59 @@
-// Sesión del usuario, compartida por toda la app. El token se guarda en el
-// dispositivo para no pedir la contraseña cada vez que se abre la app; dura 12 h
-// (lo decide la API) y al expirar se vuelve a la pantalla de inicio de sesión.
+// Sesión del usuario, compartida por toda la app.
+//  - El token de acceso dura 15 min y vive solo en memoria (api.ts).
+//  - El refresh token (30 días) está en una cookie httpOnly que JavaScript no puede leer;
+//    api.ts lo usa para renovar el token de acceso cuando la API responde 401.
+//  - En el dispositivo solo se guardan los datos del usuario, para mostrar quién tiene la
+//    sesión y las pantallas guardadas aunque no haya conexión.
 
 import { computed, ref } from 'vue';
-import { api, configurarSesion, type Sesion, type UsuarioSesion } from '@/api';
+import { api, configurarSesion, refrescarSesion, type Sesion, type UsuarioSesion } from '@/api';
 
 const CLAVE = 'stockalert-sesion';
 // Respuestas de la API que guarda el Service Worker (ver public/sw.js)
 const CACHE_DATOS = 'stockalert-datos';
 
-function leerGuardada(): Sesion | null {
+function leerGuardado(): UsuarioSesion | null {
   try {
-    const guardada = JSON.parse(localStorage.getItem(CLAVE) ?? 'null') as Sesion | null;
-    return guardada?.token && guardada.usuario ? guardada : null;
+    const guardado = JSON.parse(localStorage.getItem(CLAVE) ?? 'null') as { usuario?: UsuarioSesion } | null;
+    return guardado?.usuario?.id_usuario ? guardado.usuario : null;
   } catch {
     return null;
   }
 }
 
-const actual = ref<Sesion | null>(leerGuardada());
+const usuarioActual = ref<UsuarioSesion | null>(leerGuardado());
+const token = ref<string | null>(null);
 // Motivo por el que se cerró la sesión sin que el usuario lo pidiera (se muestra en el login)
 const aviso = ref('');
 
-function guardar(sesion: Sesion | null) {
-  actual.value = sesion;
-  configurarSesion(sesion?.token ?? null);
+function guardar(sesion: Sesion) {
+  usuarioActual.value = sesion.usuario;
+  token.value = sesion.token;
+  configurarSesion(sesion.token);
   try {
-    if (sesion) localStorage.setItem(CLAVE, JSON.stringify(sesion));
-    else localStorage.removeItem(CLAVE);
+    localStorage.setItem(CLAVE, JSON.stringify({ usuario: sesion.usuario }));
   } catch {
     // Navegación privada o almacenamiento bloqueado: la sesión dura lo que la pestaña
   }
 }
 
-async function cerrarSesion(motivo = '') {
+async function olvidar(motivo: string) {
   aviso.value = motivo;
-  guardar(null);
+  usuarioActual.value = null;
+  token.value = null;
+  configurarSesion(null);
+  try {
+    localStorage.removeItem(CLAVE);
+  } catch {
+    // sin almacenamiento
+  }
   // Los datos guardados para usar sin conexión son de esta cuenta: no deben verlos otras
   await caches?.delete(CACHE_DATOS).catch(() => {});
 }
 
-configurarSesion(actual.value?.token ?? null, () => {
-  void cerrarSesion('Tu sesión expiró o tu cuenta fue desactivada. Inicia sesión de nuevo.');
+configurarSesion(null, {
+  alRenovar: guardar,
+  alRechazar: () => void olvidar('Tu sesión expiró o tu cuenta fue desactivada. Inicia sesión de nuevo.'),
 });
 
 async function iniciarSesion(correo: string, contrasena: string) {
@@ -56,22 +68,29 @@ async function registrar(datos: { empresa: string; nombre: string; correo: strin
   guardar(sesion);
 }
 
-// Al abrir la app con una sesión guardada se confirma con la API (y se actualizan
-// nombre, rol y empresa por si cambiaron). Sin conexión se conserva la guardada.
+// Cerrar sesión: la API revoca el refresh token de este dispositivo y borra la cookie.
+// Sin conexión se cierra igual en el dispositivo.
+async function cerrarSesion() {
+  await api.logout().catch(() => {});
+  await olvidar('');
+}
+
+// Al abrir la app con un usuario guardado se pide un token de acceso con la cookie
+// (también actualiza nombre, rol y empresa por si cambiaron). Sin conexión se conserva
+// el usuario guardado y se muestran las pantallas que el Service Worker tenga guardadas.
 async function revisarSesion() {
-  if (!actual.value) return;
+  if (!usuarioActual.value || token.value) return;
   try {
-    const usuario: UsuarioSesion = await api.yo();
-    guardar({ token: actual.value.token, usuario });
+    await refrescarSesion();
   } catch {
-    // Un 401 ya cerró la sesión (configurarSesion); otros errores no la cierran
+    // Sin conexión: la sesión se renovará con la siguiente petición que llegue a la API
   }
 }
 
 export function useSesion() {
   return {
-    sesion: computed(() => actual.value),
-    usuario: computed(() => actual.value?.usuario ?? null),
+    usuario: computed(() => usuarioActual.value),
+    token: computed(() => token.value),
     aviso,
     iniciarSesion,
     registrar,
@@ -80,4 +99,4 @@ export function useSesion() {
   };
 }
 
-export const tokenActual = () => actual.value?.token ?? null;
+export const tokenActual = () => token.value;

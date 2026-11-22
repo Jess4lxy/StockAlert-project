@@ -61,7 +61,7 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 
 - El puerto se publica solo en `127.0.0.1`: otras computadoras de la red no pueden conectarse a la base. Si el puerto 5432 ya lo ocupa otro PostgreSQL instalado en la computadora, se cambia `POSTGRES_PORT` en el `.env` (por ejemplo, a 5433).
 - `npm run etl` crea el usuario de la API (paso `roles`). Para cambiar después su contraseña: se edita `API_DB_PASSWORD` y se corre `npm run roles` en `etl/`.
-- `JWT_SECRET` firma las sesiones de la aplicación (mínimo 32 caracteres). Si cambia, todas las sesiones abiertas se cierran.
+- `JWT_SECRET` firma los tokens de acceso (mínimo 32 caracteres). Si cambia, los tokens emitidos dejan de valer y los clientes los renuevan con su refresh token.
 - Nada se borra físicamente: productos, usuarios y empresas se desactivan (`estado = false`) y los movimientos nunca se editan.
 - `POSTGRES_PASSWORD` solo se aplica cuando Docker crea la base por primera vez. Para cambiarla en una base ya creada, se edita en el `.env` y luego, con el contenedor encendido, se ejecuta `docker exec -it stockalert-db psql -U stockalert -d stockalert -c "\password stockalert"` y se escribe la misma contraseña. Otra opción es `docker compose down -v`, que borra la base, y volver a correr `npm run etl`.
 
@@ -84,6 +84,7 @@ Cada paso también se puede correr por separado:
 | `npm run load` | Recrea el esquema y carga los CSV limpios en una transacción; muestra el conteo final | PostgreSQL |
 | `npm run roles` | Crea o actualiza el usuario de la API (`API_DB_USER`) con `SELECT`, `INSERT` y `UPDATE` sobre las tablas actuales y las que se creen después | PostgreSQL |
 | `npm run plataforma` | Crea o actualiza los 2 administradores de la plataforma (`ADMIN1_*`, `ADMIN2_*` del `.env`) | PostgreSQL |
+| `npm run migrar` | Aplica las migraciones de [`db/migraciones/`](db/migraciones) (tablas agregadas después del esquema base). No borra datos: es como se actualiza una base en uso, por ejemplo la de Neon con `ENV_FILE=.env.neon npm run migrar`. `npm run load` también las aplica | PostgreSQL |
 | `npm run queries` | Ejecuta las consultas de [`etl/sql/consultas.sql`](etl/sql/consultas.sql) | Consola |
 
 Resultado de la transformación (siempre el mismo, por la semilla fija):
@@ -110,7 +111,14 @@ cd frontend && npm install && npm run dev    # Web en http://localhost:5173
 
 ### Cuentas, empresas y roles
 
-Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, alertas y usuarios. Sin sesión, la app muestra **Iniciar sesión** y **Registra tu negocio** (registro público: crea la empresa y su administrador). La sesión dura 12 horas.
+Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, alertas y usuarios. Sin sesión, la app muestra **Iniciar sesión** y **Registra tu negocio** (registro público: crea la empresa y su administrador).
+
+**Sesión.** El token de acceso (JWT) dura 15 minutos y se envía en `Authorization: Bearer <token>`. Lo renueva un refresh token de 30 días que se rota en cada uso:
+
+- Web: el refresh token viaja en la cookie `stockalert_refresh` (`httpOnly`, `SameSite=Strict`, solo para `/api/auth`), que JavaScript no puede leer. El front solo guarda en el dispositivo los datos del usuario; el token de acceso vive en memoria.
+- Móvil: se envía `"cliente": "movil"` en el login o el registro; la respuesta trae `refresh_token`, que la app guarda en su almacenamiento seguro y manda en el cuerpo de `/auth/refresh` y `/auth/logout`.
+- Ante un 401 de cualquier endpoint, el cliente llama una vez a `POST /api/auth/refresh` y repite la petición. Un 409 en el refresh significa que otra pestaña acaba de renovar la sesión: se reintenta una vez.
+- Si alguien usa un refresh token que ya fue reemplazado, se cierra esa sesión por posible robo. Cerrar sesión, cambiar la contraseña o desactivar al usuario revoca sus sesiones y sus tokens de acceso dejan de valer de inmediato.
 
 | Rol | Quién es | Pantallas |
 |---|---|---|
@@ -139,19 +147,33 @@ Todo exige `Authorization: Bearer <token>`, salvo `GET /api/salud`, `POST /api/a
 
 | Recurso | Endpoints (bajo `/api`) | Quién |
 |---|---|---|
-| Sesión | `POST /auth/login`, `POST /auth/registro`, `GET /auth/yo`, `PATCH /auth/contrasena` | Público / cualquier sesión |
+| Sesión | `POST /auth/login`, `POST /auth/registro`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/yo`, `PATCH /auth/contrasena` | Público / cualquier sesión |
 | Empresas | `GET` y `POST /empresas`; `GET` y `PATCH /empresas/:id` | `plataforma` |
 | Usuarios | `GET` y `POST /usuarios`; `GET` y `PATCH /usuarios/:id` | `plataforma` (todas las empresas) y `admin` (la suya) |
 | Productos | `GET /productos`, `GET /productos/:id`; `POST`, `PATCH` y `DELETE` (desactiva) | Consultar: `admin` y `almacen`. Escribir: `admin` |
 | Movimientos | `GET /movimientos` (también por `id_producto`, `desde` y `hasta`), `GET /movimientos/:id`, `POST /movimientos` | Registrar: `admin` y `almacen` |
 | Alertas | `GET /alertas`, `GET /alertas/resumen`, `GET /alertas/:id`, `PATCH /alertas/:id` (estado) | Cambiar estado: `admin` y `almacen` |
+| Solicitudes de reposición | `GET /solicitudes`, `GET /solicitudes/resumen`, `GET /solicitudes/:id`, `PATCH /solicitudes/:id` (estado, cantidad, notas) | `admin` y `almacen` |
+| Integración con n8n | `POST /integraciones/n8n/solicitudes` | n8n, con el encabezado `X-StockAlert-Token` |
 | Dashboard y catálogos | `GET /dashboard?meses=3`, `6` o `12`; `GET /categorias` | `admin` y `almacen` |
 
 Reglas del inventario:
 
 - El stock solo cambia con movimientos. `POST /movimientos` registra el movimiento, actualiza el stock y genera o atiende alertas en una sola transacción, y rechaza (409) una salida mayor que el stock. Un error se corrige con un ajuste: los movimientos no se editan ni se borran.
 - Se genera una alerta cuando el stock queda por debajo del mínimo (`stock_bajo`, o `agotado` si llega a 0); al reponer, las pendientes pasan a `atendida`. Son las mismas reglas de la simulación del ETL.
-- Con `N8N_WEBHOOK_URL` definido, cada alerta nueva se envía por `POST` a ese flujo de n8n con el encabezado `X-StockAlert-Token` (`N8N_WEBHOOK_TOKEN`). El formato del aviso está en Swagger (sección *webhooks*).
+- Una solicitud de reposición pasa por `pendiente` → `pedida` → `recibida` (o `cancelada`). Marcarla como recibida no suma stock: la mercancía se registra con un movimiento de entrada.
+
+### Flujo con n8n
+
+```
+POST /api/movimientos ──► alerta nueva ──► POST N8N_WEBHOOK_URL ──► n8n: correo a los admins
+                                                                    └─► POST /api/integraciones/n8n/solicitudes
+```
+
+1. Con `N8N_WEBHOOK_URL` definido, cada alerta nueva se envía por `POST` a ese flujo con el encabezado `X-StockAlert-Token` (`N8N_WEBHOOK_TOKEN`). El aviso trae la alerta, el producto (con `faltante`), la empresa con sus administradores activos (`empresa.admins`: nombre y correo) y `reposicion.cantidad_sugerida` (lo necesario para llegar al doble del mínimo). El formato completo está en Swagger, sección *webhooks*.
+2. En n8n: nodo **Webhook** (`POST`, *Header Auth* con `X-StockAlert-Token`, *Respond: Immediately*) → **IF** `evento = alerta.generada` → nodo de **correo** a cada `empresa.admins[].correo`.
+3. El flujo registra la solicitud con **HTTP Request**: `POST {API}/api/integraciones/n8n/solicitudes`, encabezado `X-StockAlert-Token` y cuerpo `{ "id_alerta": {{ $json.body.alerta.id_alerta }} }` (opcionales `cantidad_sugerida` y `notas`). Si n8n reintenta, la misma alerta devuelve la solicitud existente: no se duplica.
+4. La API espera a n8n un máximo de 3 s y no reintenta; si falla, el movimiento se registra igual. Las variables se agregan al `.env` y, para producción, en Vercel (`vercel env add`), y aplican en el siguiente despliegue. n8n debe tener una URL pública con HTTPS.
 
 `GET /api/movimientos` incluye el encabezado `Server-Timing: db;dur=<ms>` con el tiempo de sus consultas en PostgreSQL; lo usa la prueba de rendimiento.
 

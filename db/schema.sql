@@ -7,6 +7,10 @@
 -- las llaves primarias y las restricciones UNIQUE. Así se obtiene la línea base
 -- para medir el rendimiento antes de optimizar (Tarea 3).
 
+-- Las tablas de db/migraciones/ dependen de estas: se borran primero y npm run load
+-- las vuelve a crear al final
+DROP TABLE IF EXISTS solicitudes_reposicion;
+DROP TABLE IF EXISTS sesiones;
 DROP TABLE IF EXISTS alertas;
 DROP TABLE IF EXISTS movimientos;
 DROP TABLE IF EXISTS productos;

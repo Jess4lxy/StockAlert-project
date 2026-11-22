@@ -34,7 +34,8 @@ export const config = {
   },
   // Firma de los tokens de sesión. Debe ser larga y aleatoria; si cambia, todas las
   // sesiones abiertas dejan de ser válidas.
-  jwt: { secreto: secretoJwt(), expira: '12h' as const },
+  // El token de acceso dura poco; el refresh token (30 días, ver auth/refresh.ts) lo renueva.
+  jwt: { secreto: secretoJwt(), expira: '15m' as const, expiraSegundos: 15 * 60 },
   // Aviso de alertas nuevas a un flujo de n8n (opcional)
   n8n: { url: process.env.N8N_WEBHOOK_URL || null, token: process.env.N8N_WEBHOOK_TOKEN || null },
   port: Number(process.env.API_PORT ?? 3000),

@@ -4,6 +4,7 @@
 
 import { Router, type Request } from 'express';
 import { hashContrasena } from '../auth/contrasena.js';
+import { revocarSesionesDeUsuario } from '../auth/refresh.js';
 import { ROLES, sesion, type Rol } from '../auth/sesion.js';
 import { pool } from '../db.js';
 import { HttpError, noEncontrado } from '../errores.js';
@@ -150,6 +151,11 @@ usuarios.patch('/:id', async (req, res) => {
   } catch (error) {
     if ((error as { code?: string }).code === '23505') throw new HttpError(409, 'Ya existe una cuenta con ese correo');
     throw error;
+  }
+  // Contraseña nueva o cuenta desactivada: se cierran sus sesiones en todos los dispositivos
+  // (si es la propia cuenta, se conserva la del dispositivo que hizo el cambio)
+  if (clave !== undefined || estado === false) {
+    await revocarSesionesDeUsuario(id, id === s.id_usuario ? (req.familia ?? undefined) : undefined);
   }
   res.json(await buscar(req, id));
 });

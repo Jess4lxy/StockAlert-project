@@ -130,7 +130,7 @@ movimientos.post('/', permitir('admin', 'almacen'), async (req, res) => {
   }
 
   const { rows } = await pool.query(`SELECT ${COLUMNAS} ${DESDE} WHERE m.id_movimiento = $1`, [idMovimiento]);
-  const n8n = alerta ? await notificarN8n(alerta, producto, s.empresa!) : false;
+  const n8n = alerta ? await notificarN8n(alerta, idEmpresa) : false;
   res.status(201).json({
     movimiento: rows[0],
     producto: {

@@ -17,6 +17,7 @@ export const CLEAN_DIR = path.join(ETL_DIR, 'data', 'clean');
 export const SAMPLE_DIR = path.join(ETL_DIR, 'data', 'sample');
 export const OUTPUT_DIR = path.join(ETL_DIR, 'output');
 export const SCHEMA_FILE = path.join(ROOT_DIR, 'db', 'schema.sql');
+export const MIGRACIONES_DIR = path.join(ROOT_DIR, 'db', 'migraciones');
 export const QUERIES_FILE = path.join(ETL_DIR, 'sql', 'consultas.sql');
 
 // Semilla fija: cada ejecución genera exactamente los mismos datos
