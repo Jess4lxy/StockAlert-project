@@ -8,8 +8,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const ETL_DIR = path.resolve(here, '..');
 export const ROOT_DIR = path.resolve(ETL_DIR, '..');
 
-// El .env vive en la raíz del repositorio (ver .env.example)
-dotenv.config({ path: path.join(ROOT_DIR, '.env'), quiet: true });
+// El .env vive en la raíz del repositorio (ver .env.example). ENV_FILE permite usar
+// otro archivo, por ejemplo .env.neon para cargar los datos en la base publicada.
+dotenv.config({ path: path.resolve(ROOT_DIR, process.env.ENV_FILE ?? '.env'), quiet: true });
 
 export const RAW_DIR = path.join(ETL_DIR, 'data', 'raw');
 export const CLEAN_DIR = path.join(ETL_DIR, 'data', 'clean');
@@ -43,5 +44,7 @@ export function conexion(): pg.ClientConfig {
     database: requerida('POSTGRES_DB'),
     user: requerida('POSTGRES_USER'),
     password: requerida('POSTGRES_PASSWORD'),
+    // Neon (la base publicada) solo acepta conexiones cifradas
+    ssl: process.env.POSTGRES_SSL === 'true',
   };
 }

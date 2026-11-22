@@ -23,6 +23,8 @@ export const config = {
     database: requerida('POSTGRES_DB'),
     user: requerida('API_DB_USER'),
     password: requerida('API_DB_PASSWORD'),
+    // Neon (la base publicada) solo acepta conexiones cifradas
+    ssl: process.env.POSTGRES_SSL === 'true',
   },
   port: Number(process.env.API_PORT ?? 3000),
   // Orígenes del frontend, separados por coma: Vite en desarrollo y la versión

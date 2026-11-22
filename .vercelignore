@@ -1,0 +1,9 @@
+# Nunca subir credenciales a Vercel: las variables se configuran en el proyecto
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+etl
+docs

@@ -27,6 +27,12 @@ const manejarError: ErrorRequestHandler = (error, _req, res, _next) => {
 };
 app.use(manejarError);
 
-app.listen(config.port, () => {
-  console.log(`API de StockAlert en http://localhost:${config.port}/api`);
-});
+// En Vercel la plataforma recibe las peticiones e importa la app; el puerto solo se
+// abre al correr la API en la computadora (npm run dev)
+if (!process.env.VERCEL) {
+  app.listen(config.port, () => {
+    console.log(`API de StockAlert en http://localhost:${config.port}/api`);
+  });
+}
+
+export default app;
