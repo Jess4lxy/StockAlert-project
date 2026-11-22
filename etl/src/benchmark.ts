@@ -5,7 +5,8 @@
 //   - db: lo que tardan las consultas en PostgreSQL (encabezado Server-Timing)
 //
 // Uso: npm run bench -- antes   |   npm run bench -- despues
-// Requiere la API corriendo (backend: npm run dev).
+// Requiere la API corriendo (backend: npm run dev) y, en el .env, BENCH_CORREO y
+// BENCH_CONTRASENA de un usuario de la empresa demo (la API exige iniciar sesión).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,9 +38,27 @@ function estadisticas(valores: number[]): Estadisticas {
   };
 }
 
+let autorizacion = '';
+
+// El inicio de sesión se hace una vez, fuera de la medición
+async function iniciarSesion() {
+  const correo = process.env.BENCH_CORREO;
+  const contrasena = process.env.BENCH_CONTRASENA;
+  if (!correo || !contrasena) {
+    throw new Error('Define BENCH_CORREO y BENCH_CONTRASENA (un usuario de la empresa demo) en el .env');
+  }
+  const res = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ correo, contrasena }),
+  });
+  if (!res.ok) throw new Error(`No se pudo iniciar sesión (${res.status})`);
+  autorizacion = `Bearer ${((await res.json()) as { token: string }).token}`;
+}
+
 async function medir(query: string) {
   const inicio = performance.now();
-  const res = await fetch(`${API_URL}/movimientos?${query}`);
+  const res = await fetch(`${API_URL}/movimientos?${query}`, { headers: { Authorization: autorizacion } });
   await res.arrayBuffer();
   const total = performance.now() - inicio;
   if (!res.ok) throw new Error(`La API respondió ${res.status}`);
@@ -66,6 +85,7 @@ async function main() {
     throw new Error('Indica la etapa: npm run bench -- antes  (o despues)');
   }
 
+  await iniciarSesion();
   const indices = await indicesActuales();
   console.log(`Etapa: ${etapa}. Índices en movimientos: ${indices.join(', ')}`);
   console.log(`${CALENTAMIENTO} corridas de calentamiento + ${CORRIDAS} medidas por escenario\n`);

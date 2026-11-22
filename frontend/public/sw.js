@@ -10,8 +10,10 @@
  *      - Navegación (HTML): red primero; si no hay conexión, responde con el index.html guardado.
  *      - Resto del mismo origen (JS, CSS, imágenes, fuentes): caché primero; si falta, red y se guarda.
  *
- * Al arrancar, la app pide guardar las consultas iniciales de cada sección (mensaje
- * GUARDAR_DATOS), así dashboard, productos, movimientos y alertas abren sin Internet.
+ * Al iniciar sesión, la app pide guardar las consultas iniciales de cada sección (mensaje
+ * GUARDAR_DATOS, con el token), así dashboard, productos, movimientos y alertas abren sin
+ * Internet. Las rutas de sesión (/api/auth/...) nunca se guardan, y al cerrar sesión la app
+ * borra la caché de datos para que otra cuenta en el mismo dispositivo no los vea.
  *
  * Una versión nueva queda "en espera" hasta que el usuario pulse "Actualizar" en la app
  * (mensaje SKIP_WAITING), así nunca se cambia el código en medio de una sesión.
@@ -47,15 +49,15 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
-  if (event.data && event.data.type === 'GUARDAR_DATOS') event.waitUntil(guardarDatos(event.data.urls));
+  if (event.data && event.data.type === 'GUARDAR_DATOS') event.waitUntil(guardarDatos(event.data.urls, event.data.token));
 });
 
-async function guardarDatos(urls) {
+async function guardarDatos(urls, token) {
   const cache = await caches.open(CACHE_DATOS);
   await Promise.all(
     urls.map(async (url) => {
       try {
-        const respuesta = await fetch(url);
+        const respuesta = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (respuesta.ok) await cache.put(url, respuesta);
       } catch {
         // Sin red o sin API: se conserva lo que ya estaba guardado
@@ -83,6 +85,8 @@ self.addEventListener('fetch', (event) => {
 
   // La API puede estar en otro origen (VITE_API_URL), por eso se revisa antes
   if (url.pathname.startsWith('/api/')) {
+    // Sesión y documentación: siempre a la red, sin guardar
+    if (url.pathname.startsWith('/api/auth/') || url.pathname.startsWith('/api/docs') || url.pathname === '/api/openapi.json') return;
     event.respondWith(redPrimero(request));
     return;
   }

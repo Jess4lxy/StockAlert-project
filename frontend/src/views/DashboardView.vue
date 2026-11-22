@@ -32,7 +32,7 @@ async function cargar() {
     datos.value = await api.dashboard(meses.value, controlador.signal);
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
-    error.value = mensajeDeError();
+    error.value = mensajeDeError(e);
   }
   cargando.value = false;
 }
@@ -56,7 +56,7 @@ const etiquetaMes = (mes: string) => nombreMes.format(new Date(`${mes}-01T00:00:
 const rango = computed(() => {
   if (!datos.value) return '';
   const { porMes, periodo } = datos.value;
-  if (porMes.length === 0) return '';
+  if (porMes.length === 0 || !periodo.fin) return '';
   return `${etiquetaMes(porMes[0].mes)} – ${fechaLarga.format(new Date(periodo.fin))} (último movimiento registrado)`;
 });
 

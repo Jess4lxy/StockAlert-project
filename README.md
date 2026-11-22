@@ -30,7 +30,7 @@ stockalert/
 
 Requisitos: Node.js 20+, Docker Desktop.
 
-1. Copiar `.env.example` a `.env` y llenar `POSTGRES_PASSWORD` y `API_DB_PASSWORD` con contraseñas aleatorias distintas (ver [Credenciales](#credenciales)). **El archivo `.env` nunca se sube al repositorio.**
+1. Copiar `.env.example` a `.env` y llenar las contraseñas (`POSTGRES_PASSWORD`, `API_DB_PASSWORD`, `JWT_SECRET`, `ADMIN1_CONTRASENA` y `ADMIN2_CONTRASENA`) con valores aleatorios distintos (ver [Credenciales](#credenciales)). **El archivo `.env` nunca se sube al repositorio.**
 2. Levantar la base de datos y cargar los datos (secciones siguientes).
 3. Correr la API y la aplicación web (sección [Aplicación web](#aplicación-web)).
 
@@ -46,12 +46,12 @@ docker compose down -v    # lo detiene y borra los datos
 
 ### Credenciales
 
-La base tiene dos usuarios, cada uno con su contraseña en el `.env`:
+La base de datos tiene dos usuarios de PostgreSQL, cada uno con su contraseña en el `.env`:
 
 | Usuario | Variables | Lo usa | Permisos |
 |---|---|---|---|
 | Dueño de la base | `POSTGRES_USER`, `POSTGRES_PASSWORD` | ETL (`etl/`) | Crea y borra tablas, carga datos, crea índices y usuarios |
-| Solo lectura | `API_DB_USER`, `API_DB_PASSWORD` | API (`backend/`) | Solo `SELECT`: no puede insertar, modificar, borrar ni crear tablas |
+| Usuario de la API | `API_DB_USER`, `API_DB_PASSWORD` | API (`backend/`) | `SELECT`, `INSERT` y `UPDATE`: no puede borrar filas ni crear, modificar o borrar tablas |
 
 Para generar cada contraseña:
 
@@ -60,7 +60,9 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```
 
 - El puerto se publica solo en `127.0.0.1`: otras computadoras de la red no pueden conectarse a la base. Si el puerto 5432 ya lo ocupa otro PostgreSQL instalado en la computadora, se cambia `POSTGRES_PORT` en el `.env` (por ejemplo, a 5433).
-- `npm run etl` crea el usuario de solo lectura (paso `roles`). Para cambiar después su contraseña: se edita `API_DB_PASSWORD` y se corre `npm run roles` en `etl/`.
+- `npm run etl` crea el usuario de la API (paso `roles`). Para cambiar después su contraseña: se edita `API_DB_PASSWORD` y se corre `npm run roles` en `etl/`.
+- `JWT_SECRET` firma las sesiones de la aplicación (mínimo 32 caracteres). Si cambia, todas las sesiones abiertas se cierran.
+- Nada se borra físicamente: productos, usuarios y empresas se desactivan (`estado = false`) y los movimientos nunca se editan.
 - `POSTGRES_PASSWORD` solo se aplica cuando Docker crea la base por primera vez. Para cambiarla en una base ya creada, se edita en el `.env` y luego, con el contenedor encendido, se ejecuta `docker exec -it stockalert-db psql -U stockalert -d stockalert -c "\password stockalert"` y se escribe la misma contraseña. Otra opción es `docker compose down -v`, que borra la base, y volver a correr `npm run etl`.
 
 ## ETL (Tarea 2)
@@ -70,7 +72,7 @@ El origen son **datos sintéticos**: un generador con semilla fija crea un negoc
 ```bash
 cd etl
 npm install
-npm run etl          # generate → transform → load → roles → queries
+npm run etl          # generate → transform → load → roles → plataforma → queries
 ```
 
 Cada paso también se puede correr por separado:
@@ -80,7 +82,8 @@ Cada paso también se puede correr por separado:
 | `npm run generate` | Genera los CSV crudos con errores intencionales: 450 filas extra (300 duplicadas y 150 con campos vacíos, tipos incorrectos o referencias inexistentes) y formatos mezclados | `etl/data/raw/` |
 | `npm run transform` | Detecta vacíos, duplicados y tipos incorrectos; normaliza fechas, tipo de movimiento, cantidades, categorías, nombres, precios y correos; cuenta corregidos y descartados | `etl/data/clean/`, `etl/output/reporte_transformacion.json` |
 | `npm run load` | Recrea el esquema y carga los CSV limpios en una transacción; muestra el conteo final | PostgreSQL |
-| `npm run roles` | Crea o actualiza el usuario de solo lectura de la API (`API_DB_USER`) con permiso `SELECT` sobre las tablas actuales y las que se creen después | PostgreSQL |
+| `npm run roles` | Crea o actualiza el usuario de la API (`API_DB_USER`) con `SELECT`, `INSERT` y `UPDATE` sobre las tablas actuales y las que se creen después | PostgreSQL |
+| `npm run plataforma` | Crea o actualiza los 2 administradores de la plataforma (`ADMIN1_*`, `ADMIN2_*` del `.env`) | PostgreSQL |
 | `npm run queries` | Ejecuta las consultas de [`etl/sql/consultas.sql`](etl/sql/consultas.sql) | Consola |
 
 Resultado de la transformación (siempre el mismo, por la semilla fija):
@@ -91,6 +94,8 @@ Resultado de la transformación (siempre el mismo, por la semilla fija):
 | productos | 98 | 37 | 56 | 5 | 93 |
 | movimientos | 10,450 | 6,090 | 3,910 | 450 | **10,000** |
 | alertas | 208 | 208 | 0 | 0 | 208 |
+
+Todos los datos sintéticos se cargan en la empresa **Tienda Demo StockAlert** (id 1). Sus 8 usuarios ficticios no tienen contraseña: para entrar a la empresa demo, un administrador de la plataforma crea un usuario en ella o le asigna contraseña a uno existente.
 
 En [`etl/data/sample/`](etl/data/sample) hay una muestra de 50 filas de cada archivo crudo. Los archivos completos no se suben porque el generador los vuelve a crear idénticos.
 
@@ -103,7 +108,19 @@ cd backend && npm install && npm run dev     # API en http://localhost:3000/api
 cd frontend && npm install && npm run dev    # Web en http://localhost:5173
 ```
 
-La aplicación tiene cuatro pantallas. La sección activa se guarda en el hash de la URL (`#/productos`):
+### Cuentas, empresas y roles
+
+Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, alertas y usuarios. Sin sesión, la app muestra **Iniciar sesión** y **Registra tu negocio** (registro público: crea la empresa y su administrador). La sesión dura 12 horas.
+
+| Rol | Quién es | Pantallas |
+|---|---|---|
+| `plataforma` | Los 2 administradores precargados (`ADMIN1_*`, `ADMIN2_*`); no pertenecen a ninguna empresa | **Empresas** (crear con su administrador, renombrar, activar o desactivar) y **Usuarios** de todas las empresas |
+| `admin` | Dueño de una empresa | Inventario completo y **Usuarios** de su empresa. En la API, además crea, edita y desactiva productos |
+| `almacen` | Encargado de almacén | Inventario. En la API registra movimientos y atiende alertas |
+
+### Pantallas del inventario
+
+La sección activa se guarda en el hash de la URL (`#/productos`):
 
 | Pantalla | Qué muestra |
 |---|---|
@@ -114,23 +131,31 @@ La aplicación tiene cuatro pantallas. La sección activa se guarda en el hash d
 
 La búsqueda, los filtros y la paginación (10, 20, 50 o 100 por página) se resuelven en PostgreSQL con `LIMIT`/`OFFSET`, así que el navegador solo descarga la página que muestra y nunca los 10,000 registros.
 
-| Endpoint | Parámetros | Respuesta |
-|---|---|---|
-| `GET /api/movimientos` | `q` (texto en el nombre del producto), `tipo` (`entrada`/`salida`/`ajuste`), `categoria`, `page`, `limit` (10/20/50/100) | `{ data, page, limit, total, totalPages }` |
-| `GET /api/productos` | `q`, `estado` (`reponer`/`bajo`/`agotado`/`ok`), `categoria`, `page`, `limit` | `{ data, page, limit, total, totalPages }` |
-| `GET /api/alertas` | `estado` (`pendiente`/`atendida`/`cerrada`), `tipo` (`stock_bajo`/`agotado`), `page`, `limit` | `{ data, page, limit, total, totalPages }` |
-| `GET /api/alertas/resumen` | — | `{ pendientes, total }` |
-| `GET /api/dashboard` | `meses` (3/6/12) | Indicadores, entradas/salidas por mes, ventas por categoría y productos por reponer |
-| `GET /api/categorias` | — | Lista de categorías para el filtro |
-| `GET /api/salud` | — | `{ ok: true }` |
-| `GET /api/docs` | — | Documentación interactiva (Swagger UI) |
-| `GET /api/openapi.json` | — | Especificación OpenAPI 3.1 de todos los endpoints |
+### API
 
-La documentación publicada está en https://stockalert-beta.vercel.app/api/docs. La especificación vive en [`backend/src/openapi.ts`](backend/src/openapi.ts): al agregar o cambiar un endpoint hay que actualizarla.
+La documentación completa, con cada parámetro, cuerpo, respuesta y ejemplo, está en **Swagger**: https://stockalert-beta.vercel.app/api/docs (en local, http://localhost:3000/api/docs). La especificación vive en [`backend/src/openapi.ts`](backend/src/openapi.ts): al agregar o cambiar un endpoint hay que actualizarla.
+
+Todo exige `Authorization: Bearer <token>`, salvo `GET /api/salud`, `POST /api/auth/login`, `POST /api/auth/registro` y la documentación. Los errores responden `{ "error": "mensaje" }`.
+
+| Recurso | Endpoints (bajo `/api`) | Quién |
+|---|---|---|
+| Sesión | `POST /auth/login`, `POST /auth/registro`, `GET /auth/yo`, `PATCH /auth/contrasena` | Público / cualquier sesión |
+| Empresas | `GET` y `POST /empresas`; `GET` y `PATCH /empresas/:id` | `plataforma` |
+| Usuarios | `GET` y `POST /usuarios`; `GET` y `PATCH /usuarios/:id` | `plataforma` (todas las empresas) y `admin` (la suya) |
+| Productos | `GET /productos`, `GET /productos/:id`; `POST`, `PATCH` y `DELETE` (desactiva) | Consultar: `admin` y `almacen`. Escribir: `admin` |
+| Movimientos | `GET /movimientos` (también por `id_producto`, `desde` y `hasta`), `GET /movimientos/:id`, `POST /movimientos` | Registrar: `admin` y `almacen` |
+| Alertas | `GET /alertas`, `GET /alertas/resumen`, `GET /alertas/:id`, `PATCH /alertas/:id` (estado) | Cambiar estado: `admin` y `almacen` |
+| Dashboard y catálogos | `GET /dashboard?meses=3`, `6` o `12`; `GET /categorias` | `admin` y `almacen` |
+
+Reglas del inventario:
+
+- El stock solo cambia con movimientos. `POST /movimientos` registra el movimiento, actualiza el stock y genera o atiende alertas en una sola transacción, y rechaza (409) una salida mayor que el stock. Un error se corrige con un ajuste: los movimientos no se editan ni se borran.
+- Se genera una alerta cuando el stock queda por debajo del mínimo (`stock_bajo`, o `agotado` si llega a 0); al reponer, las pendientes pasan a `atendida`. Son las mismas reglas de la simulación del ETL.
+- Con `N8N_WEBHOOK_URL` definido, cada alerta nueva se envía por `POST` a ese flujo de n8n con el encabezado `X-StockAlert-Token` (`N8N_WEBHOOK_TOKEN`). El formato del aviso está en Swagger (sección *webhooks*).
 
 `GET /api/movimientos` incluye el encabezado `Server-Timing: db;dur=<ms>` con el tiempo de sus consultas en PostgreSQL; lo usa la prueba de rendimiento.
 
-La interfaz está armada con componentes base reutilizables en [`frontend/src/components/ui`](frontend/src/components/ui) (`AppShell`, `PageHeader`, `FilterBar`, `FormField`, `TextInput`, `SelectInput`, `BaseButton`, `DataTable`, `TablePagination`, `StatusBadge`, `StatCard`, `ChartCard`, `AppIcon`) y gráficas en [`frontend/src/components/charts`](frontend/src/components/charts) (`LineChart`, `BarChart`, con Chart.js). Los colores y demás tokens están en `frontend/src/style.css`. Las pantallas viven en `frontend/src/views`.
+La interfaz está armada con componentes base reutilizables en [`frontend/src/components/ui`](frontend/src/components/ui) (`AppShell`, `PageHeader`, `FilterBar`, `FormField`, `TextInput`, `SelectInput`, `BaseButton`, `BaseDialog`, `AvisoError`, `DataTable`, `TablePagination`, `StatusBadge`, `StatCard`, `ChartCard`, `AppIcon`) y gráficas en [`frontend/src/components/charts`](frontend/src/components/charts) (`LineChart`, `BarChart`, con Chart.js). Los colores y demás tokens están en `frontend/src/style.css`. Las pantallas viven en `frontend/src/views`.
 
 Los parámetros se envían a PostgreSQL como consultas parametrizadas (`$1`, `$2`…), nunca concatenados al SQL. Si el frontend corre en otro origen, se define `CORS_ORIGIN` en el `.env`, con los orígenes separados por coma (por defecto `http://localhost:5173,http://localhost:4173`).
 
@@ -199,7 +224,7 @@ Con la API corriendo (`backend: npm run dev`), desde `etl/`:
 
 ```bash
 npm run load                  # base sin índices secundarios (línea base)
-npm run bench -- antes        # 5 corridas de calentamiento + 30 medidas por escenario
+npm run bench -- antes        # 5 corridas de calentamiento + 30 medidas por escenario (inicia sesión con BENCH_CORREO y BENCH_CONTRASENA del .env)
 npm run indices               # aplica db/indices.sql
 npm run bench -- despues
 npm run bench:comparar        # medianas antes/después

@@ -7,6 +7,7 @@
 
 import { computed, ref } from 'vue';
 import { urlsEsenciales } from '@/api';
+import { tokenActual } from '@/sesion';
 
 // El evento no está en los tipos de TypeScript porque no es estándar en todos los navegadores
 interface BeforeInstallPromptEvent extends Event {
@@ -84,10 +85,6 @@ function registrarServiceWorker() {
     })
     .catch((error) => console.error('No se pudo registrar el Service Worker:', error));
 
-  navigator.serviceWorker.ready.then((reg) => {
-    reg.active?.postMessage({ type: 'GUARDAR_DATOS', urls: urlsEsenciales() });
-  });
-
   // Cuando la versión nueva toma el control (tras SKIP_WAITING) se recarga para usarla.
   // El primer cambio de controlador en una página sin SW previo es solo la instalación inicial.
   let controlado = !!navigator.serviceWorker.controller;
@@ -100,6 +97,19 @@ function registrarServiceWorker() {
     if (recargando) return;
     recargando = true;
     window.location.reload();
+  });
+}
+
+/**
+ * Pide al Service Worker guardar la vista inicial de cada sección con el token de la
+ * sesión, para que abran sin conexión. Se llama al iniciar sesión (App.vue).
+ */
+export function guardarDatosSinConexion() {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  const token = tokenActual();
+  if (!token) return;
+  navigator.serviceWorker.ready.then((reg) => {
+    reg.active?.postMessage({ type: 'GUARDAR_DATOS', urls: urlsEsenciales(), token });
   });
 }
 

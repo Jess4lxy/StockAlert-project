@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import AppIcon from './AppIcon.vue';
 
-defineProps<{ id?: string; type?: string; placeholder?: string; icon?: string }>();
+defineProps<{
+  id?: string;
+  type?: string;
+  placeholder?: string;
+  icon?: string;
+  autocomplete?: string;
+  maxlength?: number;
+  /** Marca el campo con borde rojo (error de validación) */
+  invalid?: boolean;
+}>();
 const modelo = defineModel<string>({ default: '' });
 </script>
 
@@ -13,8 +22,18 @@ const modelo = defineModel<string>({ default: '' });
       v-model="modelo"
       :type="type ?? 'text'"
       :placeholder="placeholder"
-      class="h-[43px] w-full rounded-lg border border-borde bg-white px-3 text-sm text-texto placeholder:text-texto-suave/70 focus:border-marino focus:ring-2 focus:ring-marino/15 focus:outline-none"
-      :class="{ 'pl-10': icon }"
+      :autocomplete="autocomplete"
+      :maxlength="maxlength"
+      :aria-invalid="invalid || undefined"
+      class="h-[43px] w-full rounded-lg border bg-white px-3 text-sm text-texto placeholder:text-texto-suave/70 focus:ring-2 focus:outline-none"
+      :class="[
+        { 'pl-10': icon, 'pr-11': $slots.sufijo },
+        invalid ? 'border-error focus:border-error focus:ring-error/15' : 'border-borde focus:border-marino focus:ring-marino/15',
+      ]"
     />
+    <!-- Acción a la derecha del campo (p. ej. mostrar la contraseña) -->
+    <div v-if="$slots.sufijo" class="absolute inset-y-0 right-1 flex items-center">
+      <slot name="sufijo" />
+    </div>
   </div>
 </template>

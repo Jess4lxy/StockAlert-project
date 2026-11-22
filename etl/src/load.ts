@@ -10,15 +10,19 @@ import { readCsv, type Row } from './csv.js';
 
 const LOTE = 1000;
 
+// Los datos sintéticos son de un solo negocio: se cargan en esta empresa demo
+const EMPRESA_DEMO = { id: '1', nombre: 'Tienda Demo StockAlert' };
+
 // Orden de carga: primero las tablas a las que apuntan las llaves foráneas
-const TABLAS: { tabla: string; id: string; columnas: string[] }[] = [
+// fijos: columnas que no vienen en el CSV y llevan el mismo valor en todas las filas
+const TABLAS: { tabla: string; id: string; columnas: string[]; fijos?: Row }[] = [
   {
-    tabla: 'usuarios', id: 'id_usuario',
-    columnas: ['id_usuario', 'nombre', 'correo', 'contrasena_hash', 'rol', 'fecha_registro', 'estado'],
+    tabla: 'usuarios', id: 'id_usuario', fijos: { id_empresa: EMPRESA_DEMO.id },
+    columnas: ['id_usuario', 'id_empresa', 'nombre', 'correo', 'contrasena_hash', 'rol', 'fecha_registro', 'estado'],
   },
   {
-    tabla: 'productos', id: 'id_producto',
-    columnas: ['id_producto', 'nombre', 'descripcion', 'categoria', 'stock_actual', 'stock_minimo', 'precio', 'fecha_actualizacion', 'estado'],
+    tabla: 'productos', id: 'id_producto', fijos: { id_empresa: EMPRESA_DEMO.id },
+    columnas: ['id_producto', 'id_empresa', 'nombre', 'descripcion', 'categoria', 'stock_actual', 'stock_minimo', 'precio', 'fecha_actualizacion', 'estado'],
   },
   {
     tabla: 'movimientos', id: 'id_movimiento',
@@ -54,9 +58,11 @@ async function main() {
   try {
     await client.query('BEGIN');
     await client.query(fs.readFileSync(SCHEMA_FILE, 'utf8'));
+    await client.query('INSERT INTO empresas (id_empresa, nombre) VALUES ($1, $2)', [EMPRESA_DEMO.id, EMPRESA_DEMO.nombre]);
+    await client.query(`SELECT setval(pg_get_serial_sequence('empresas', 'id_empresa'), 1)`);
 
-    for (const { tabla, id, columnas } of TABLAS) {
-      const rows = readCsv(path.join(CLEAN_DIR, `${tabla}.csv`));
+    for (const { tabla, id, columnas, fijos } of TABLAS) {
+      const rows = readCsv(path.join(CLEAN_DIR, `${tabla}.csv`)).map((row) => ({ ...row, ...fijos }));
       await insertarEnLotes(client, tabla, columnas, rows);
       // Los id se insertaron explícitamente: el contador de identidad sigue después del último
       await client.query(`SELECT setval(pg_get_serial_sequence('${tabla}', '${id}'), (SELECT max(${id}) FROM ${tabla}))`);
@@ -70,7 +76,8 @@ async function main() {
 
   const segundos = ((performance.now() - inicio) / 1000).toFixed(2);
   const { rows } = await client.query(`
-    SELECT 'usuarios' AS tabla, count(*)::int AS registros FROM usuarios
+    SELECT 'empresas' AS tabla, count(*)::int AS registros FROM empresas
+    UNION ALL SELECT 'usuarios', count(*)::int FROM usuarios
     UNION ALL SELECT 'productos', count(*)::int FROM productos
     UNION ALL SELECT 'movimientos', count(*)::int FROM movimientos
     UNION ALL SELECT 'alertas', count(*)::int FROM alertas`);

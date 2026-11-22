@@ -2,7 +2,9 @@
 //   import { DataTable, SelectInput } from '@/components/ui';
 export { default as AppIcon } from './AppIcon.vue';
 export { default as AppShell } from './AppShell.vue';
+export { default as AvisoError } from './AvisoError.vue';
 export { default as BaseButton } from './BaseButton.vue';
+export { default as BaseDialog } from './BaseDialog.vue';
 export { default as ChartCard } from './ChartCard.vue';
 export { default as DataTable } from './DataTable.vue';
 export { default as FilterBar } from './FilterBar.vue';

@@ -6,7 +6,12 @@ import { usePwa } from '@/pwa/usePwa';
 import AppIcon from './AppIcon.vue';
 import type { ItemNavegacion } from './types';
 
-defineProps<{ items: ItemNavegacion[] }>();
+defineProps<{
+  items: ItemNavegacion[];
+  /** Quién tiene la sesión abierta: nombre y detalle (empresa o rol) */
+  usuario?: { nombre: string; detalle: string };
+}>();
+const emit = defineEmits<{ salir: [] }>();
 const activo = defineModel<string>('active', { required: true });
 
 const { enLinea, instalada, puedeInstalar, instalar } = usePwa();
@@ -44,6 +49,22 @@ const logo = `${import.meta.env.BASE_URL}favicon.svg`;
             <AppIcon name="download" :size="18" />
             Instalar app
           </button>
+
+          <div v-if="usuario" class="ml-1 flex items-center gap-2 border-l border-white/20 pl-3">
+            <div class="hidden max-w-[220px] text-right leading-tight sm:block">
+              <p class="truncate text-sm font-semibold">{{ usuario.nombre }}</p>
+              <p class="truncate text-xs text-white/70">{{ usuario.detalle }}</p>
+            </div>
+            <button
+              type="button"
+              class="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:text-white"
+              :aria-label="`Cerrar sesión de ${usuario.nombre}`"
+              @click="emit('salir')"
+            >
+              <AppIcon name="logout" :size="18" />
+              <span class="hidden md:inline">Salir</span>
+            </button>
+          </div>
         </div>
       </div>
     </header>

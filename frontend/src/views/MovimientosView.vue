@@ -33,7 +33,7 @@ async function cargar() {
     resultado.value = await api.movimientos({ ...filtros }, controlador.signal);
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
-    error.value = mensajeDeError();
+    error.value = mensajeDeError(e);
   }
   cargando.value = false;
 }

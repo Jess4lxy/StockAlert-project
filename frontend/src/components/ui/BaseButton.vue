@@ -7,6 +7,8 @@ withDefaults(
     type?: 'button' | 'submit';
     icon?: string;
     disabled?: boolean;
+    /** Muestra un indicador de carga y desactiva el botón */
+    loading?: boolean;
   }>(),
   { variant: 'primary', type: 'button' },
 );
@@ -21,11 +23,13 @@ const VARIANTES = {
 <template>
   <button
     :type="type"
-    :disabled="disabled"
+    :disabled="disabled || loading"
+    :aria-busy="loading || undefined"
     class="inline-flex h-[43px] items-center justify-center gap-2 rounded-lg border-2 px-5 text-[15px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     :class="VARIANTES[variant]"
   >
-    <AppIcon v-if="icon" :name="icon" />
+    <span v-if="loading" class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+    <AppIcon v-else-if="icon" :name="icon" />
     <slot />
   </button>
 </template>
