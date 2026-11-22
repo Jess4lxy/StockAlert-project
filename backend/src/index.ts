@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { alertas } from './routes/alertas.js';
 import { categorias } from './routes/categorias.js';
 import { dashboard } from './routes/dashboard.js';
+import { docs } from './routes/docs.js';
 import { movimientos } from './routes/movimientos.js';
 import { productos } from './routes/productos.js';
 
@@ -19,6 +20,7 @@ app.use('/api/categorias', categorias);
 app.use('/api/dashboard', dashboard);
 app.use('/api/productos', productos);
 app.use('/api/alertas', alertas);
+app.use('/api', docs);
 
 // Express 5 envía aquí los errores de las rutas async
 const manejarError: ErrorRequestHandler = (error, _req, res, _next) => {

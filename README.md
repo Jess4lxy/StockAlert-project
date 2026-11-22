@@ -123,6 +123,10 @@ La búsqueda, los filtros y la paginación (10, 20, 50 o 100 por página) se res
 | `GET /api/dashboard` | `meses` (3/6/12) | Indicadores, entradas/salidas por mes, ventas por categoría y productos por reponer |
 | `GET /api/categorias` | — | Lista de categorías para el filtro |
 | `GET /api/salud` | — | `{ ok: true }` |
+| `GET /api/docs` | — | Documentación interactiva (Swagger UI) |
+| `GET /api/openapi.json` | — | Especificación OpenAPI 3.1 de todos los endpoints |
+
+La documentación publicada está en https://stockalert-beta.vercel.app/api/docs. La especificación vive en [`backend/src/openapi.ts`](backend/src/openapi.ts): al agregar o cambiar un endpoint hay que actualizarla.
 
 `GET /api/movimientos` incluye el encabezado `Server-Timing: db;dur=<ms>` con el tiempo de sus consultas en PostgreSQL; lo usa la prueba de rendimiento.
 
