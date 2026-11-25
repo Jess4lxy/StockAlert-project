@@ -83,12 +83,36 @@ async function guardarDatos(urls, token) {
 
 async function redPrimero(request) {
   const cache = await caches.open(CACHE_DATOS);
+  // En modo avión, Firefox se salta el Service Worker si este llama a fetch(); por eso se
+  // responde con lo guardado sin intentar la red
+  if (!navigator.onLine) {
+    const guardado = await cache.match(request);
+    if (guardado) return guardado;
+  }
   try {
     const respuesta = await fetch(request);
     if (respuesta.ok) await cache.put(request, respuesta.clone());
     return respuesta;
   } catch {
     return (await cache.match(request)) || Response.error();
+  }
+}
+
+async function paginaGuardada() {
+  const cache = await caches.open(CACHE);
+  return (await cache.match(aUrl('index.html'))) || (await cache.match(aUrl('./')));
+}
+
+async function navegacion(request) {
+  // Mismo motivo que en redPrimero: sin red no se llama a fetch()
+  if (!navigator.onLine) {
+    const guardada = await paginaGuardada();
+    if (guardada) return guardada;
+  }
+  try {
+    return await fetch(request);
+  } catch {
+    return (await paginaGuardada()) || Response.error();
   }
 }
 
@@ -110,12 +134,7 @@ self.addEventListener('fetch', (event) => {
 
   // Navegación: intenta la red para tener siempre el HTML más reciente; sin conexión usa el guardado
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request).catch(async () => {
-        const cache = await caches.open(CACHE);
-        return (await cache.match(aUrl('index.html'))) || (await cache.match(aUrl('./'))) || Response.error();
-      }),
-    );
+    event.respondWith(navegacion(request));
     return;
   }
 
