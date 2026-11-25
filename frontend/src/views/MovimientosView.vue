@@ -14,6 +14,23 @@ import {
   type Columna,
   type Tono,
 } from '@/components/ui';
+import MovimientoDialog from '@/components/inventario/MovimientoDialog.vue';
+import { useInventario, type Resultado } from '@/datos/inventario';
+import { notificarAlerta } from '@/dispositivo/notificaciones';
+import { useSesion } from '@/sesion';
+
+const { usuario } = useSesion();
+const { version, pendientes } = useInventario();
+const porEnviar = computed(() => pendientes.value.filter((o) => o.tipo === 'movimiento').length);
+const dialogo = ref(false);
+const exito = ref('');
+
+function avisar(nombre: string, accion: string, r: Resultado) {
+  exito.value = r.enviada ? `${nombre}: ${accion}.` : `${nombre}: guardado en el dispositivo; se enviará al volver la conexión.`;
+  setTimeout(() => (exito.value = ''), 5000);
+  if (r.alerta && usuario.value) void notificarAlerta(usuario.value.id_usuario, r.alerta, nombre);
+}
+
 
 const filtros = reactive({ q: '', tipo: '', categoria: '', page: 1, limit: 20 });
 const resultado = ref<Pagina<Movimiento> | null>(null);
@@ -55,6 +72,8 @@ watch(
 );
 watch(() => [filtros.tipo, filtros.categoria, filtros.limit], reiniciar);
 watch(() => filtros.page, cargar);
+// Se registró algo o terminó una sincronización
+watch(version, cargar);
 
 onMounted(async () => {
   cargar();
@@ -105,7 +124,11 @@ function cantidad(m: Movimiento): string {
 
 <template>
   <section>
-    <PageHeader title="Movimientos de inventario" subtitle="Entradas, salidas y ajustes registrados en el almacén." />
+    <PageHeader title="Movimientos de inventario" subtitle="Entradas, salidas y ajustes registrados en el almacén.">
+      <template #actions>
+        <BaseButton icon="add" @click="dialogo = true">Registrar movimiento</BaseButton>
+      </template>
+    </PageHeader>
 
     <FilterBar :columns="3">
       <FormField id="buscar" label="Producto">
@@ -122,6 +145,10 @@ function cantidad(m: Movimiento): string {
       </template>
     </FilterBar>
 
+    <p v-if="exito" class="mb-3 rounded-lg bg-exito-10 p-3 text-sm text-exito" role="status">{{ exito }}</p>
+    <p v-if="porEnviar" class="mb-3 rounded-lg bg-alerta-10 p-3 text-sm text-texto" role="status">
+      {{ porEnviar === 1 ? 'Hay 1 movimiento' : `Hay ${porEnviar} movimientos` }} por enviar; aparecerán en la lista al sincronizarse.
+    </p>
     <p v-if="error" class="mb-3 rounded-lg bg-error-10 p-3 text-sm text-error">{{ error }}</p>
 
     <DataTable
@@ -152,5 +179,7 @@ function cantidad(m: Movimiento): string {
       :total="resultado.total"
       class="mt-2"
     />
+
+    <MovimientoDialog v-model:open="dialogo" :producto="null" @guardado="(n, r) => avisar(n, 'movimiento registrado', r)" />
   </section>
 </template>

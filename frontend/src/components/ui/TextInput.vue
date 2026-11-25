@@ -8,6 +8,10 @@ defineProps<{
   icon?: string;
   autocomplete?: string;
   maxlength?: number;
+  /** Teclado en móvil: numeric, decimal… */
+  inputmode?: 'text' | 'numeric' | 'decimal';
+  /** id de un <datalist> con sugerencias */
+  list?: string;
   /** Marca el campo con borde rojo (error de validación) */
   invalid?: boolean;
 }>();
@@ -24,6 +28,8 @@ const modelo = defineModel<string>({ default: '' });
       :placeholder="placeholder"
       :autocomplete="autocomplete"
       :maxlength="maxlength"
+      :inputmode="inputmode"
+      :list="list"
       :aria-invalid="invalid || undefined"
       class="h-[43px] w-full rounded-lg border bg-white px-3 text-sm text-texto placeholder:text-texto-suave/70 focus:ring-2 focus:outline-none"
       :class="[

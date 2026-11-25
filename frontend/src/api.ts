@@ -1,3 +1,5 @@
+import type { DatosMovimiento, DatosProducto } from '@/datos/bd';
+
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
 
 export type TipoMovimiento = 'entrada' | 'salida' | 'ajuste';
@@ -23,14 +25,20 @@ export interface Producto {
   id_producto: number;
   nombre: string;
   descripcion: string | null;
-  categoria: string;
+  categoria: string | null;
+  codigo_barras: string | null;
   stock_actual: number;
   stock_minimo: number;
   precio: number;
   fecha_actualizacion: string;
   estado: boolean;
   estado_stock: EstadoStock;
+  /** Cuándo cambió la foto; null si no tiene */
+  foto_fecha: string | null;
 }
+
+/** Respuesta al crear o editar: trae la alerta si el cambio dejó el stock bajo el mínimo */
+export type ProductoGuardado = Producto & { alerta_generada: Alerta | null };
 
 export interface Alerta {
   id_alerta: number;
@@ -64,6 +72,7 @@ export interface FiltrosProductos {
   q: string;
   estado: string;
   categoria: string;
+  activo?: 'true' | 'false' | 'todos';
   page: number;
   limit: number;
 }
@@ -127,7 +136,7 @@ export interface FiltrosUsuarios {
   limit: number;
 }
 
-type Parametros = Record<string, string | number>;
+type Parametros = Record<string, string | number | undefined>;
 
 // Error con el mensaje que envía la API ({ error }) y su código HTTP
 export class ErrorApi extends Error {
@@ -186,7 +195,7 @@ function construirUrl(ruta: string, params: Parametros = {}): string {
   // El segundo argumento permite una VITE_API_URL relativa (/api), como la del despliegue
   const url = new URL(`${API_URL}${ruta}`, window.location.origin);
   for (const [clave, valor] of Object.entries(params)) {
-    if (valor !== '') url.searchParams.set(clave, String(valor));
+    if (valor !== '' && valor !== undefined) url.searchParams.set(clave, String(valor));
   }
   return url.href;
 }
@@ -197,6 +206,7 @@ async function pedir<T>(
   opciones: { params?: Parametros; body?: unknown; signal?: AbortSignal } = {},
   reintento = false,
 ): Promise<T> {
+  const imagen = opciones.body instanceof Blob ? opciones.body : null;
   const deSesion = ruta.startsWith('/auth/');
   const res = await fetch(construirUrl(ruta, opciones.params), {
     method: metodo,
@@ -205,9 +215,9 @@ async function pedir<T>(
     credentials: deSesion ? 'include' : 'same-origin',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opciones.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(opciones.body !== undefined ? { 'Content-Type': imagen?.type ?? 'application/json' } : {}),
     },
-    body: opciones.body !== undefined ? JSON.stringify(opciones.body) : undefined,
+    body: imagen ?? (opciones.body !== undefined ? JSON.stringify(opciones.body) : undefined),
   });
   // Token de acceso vencido (o aún no pedido al abrir la app): se renueva una vez y se reintenta
   if (res.status === 401 && !deSesion && !reintento && (await refrescarSesion())) {
@@ -217,7 +227,8 @@ async function pedir<T>(
     const datos = await res.json().catch(() => null);
     throw new ErrorApi(res.status, datos?.error ?? `Error ${res.status} al consultar ${ruta}`);
   }
-  return (res.status === 204 ? undefined : await res.json()) as T;
+  if (res.status === 204) return undefined as T;
+  return (res.headers.get('Content-Type')?.startsWith('image/') ? await res.blob() : await res.json()) as T;
 }
 
 const get = <T>(ruta: string, params: Parametros = {}, signal?: AbortSignal) => pedir<T>('GET', ruta, { params, signal });
@@ -243,6 +254,9 @@ export interface Dashboard {
   porReponer: ProductoPorReponer[];
 }
 
+// Las escrituras del inventario no esperan más de 20 s: con una red que no responde pasan a la cola
+const escritura = (body?: unknown) => ({ body, signal: AbortSignal.timeout(20_000) });
+
 export const api = {
   // Sesión
   login: (correo: string, contrasena: string) => pedir<Sesion>('POST', '/auth/login', { body: { correo, contrasena } }),
@@ -258,6 +272,15 @@ export const api = {
   dashboard: (meses: number, signal?: AbortSignal) => get<Dashboard>('/dashboard', { meses }, signal),
   productos: (filtros: FiltrosProductos, signal?: AbortSignal) =>
     get<Pagina<Producto>>('/productos', { ...filtros }, signal),
+  crearProducto: (datos: DatosProducto & { clave_cliente: string }) => pedir<ProductoGuardado>('POST', '/productos', escritura(datos)),
+  editarProducto: (id: number, datos: DatosProducto & { estado?: boolean }) => pedir<ProductoGuardado>('PATCH', `/productos/${id}`, escritura(datos)),
+  desactivarProducto: (id: number) => pedir<void>('DELETE', `/productos/${id}`, escritura()),
+  foto: (id: number) => pedir<Blob>('GET', `/productos/${id}/foto`),
+  subirFoto: (id: number, foto: Blob) => pedir<Producto>('PUT', `/productos/${id}/foto`, escritura(foto)),
+  quitarFoto: (id: number) => pedir<void>('DELETE', `/productos/${id}/foto`, escritura()),
+  registrarMovimiento: (datos: DatosMovimiento & { id_producto: number; clave_cliente: string; fecha_movimiento: string }) =>
+    pedir<{ alerta_generada: Alerta | null }>('POST', '/movimientos', escritura(datos)),
+  cambiarAlerta: (id: number, estado: EstadoAlerta) => pedir<Alerta>('PATCH', `/alertas/${id}`, escritura({ estado })),
   alertas: (filtros: FiltrosAlertas, signal?: AbortSignal) => get<Pagina<Alerta>>('/alertas', { ...filtros }, signal),
   resumenAlertas: () => get<{ pendientes: number; total: number }>('/alertas/resumen'),
 
@@ -274,13 +297,13 @@ export const api = {
 };
 
 // Lo que cada pantalla pide al abrirse, sin filtros. El Service Worker lo guarda al
-// iniciar sesión para que las cuatro secciones abran sin conexión aunque no se hayan visitado.
+// iniciar sesión para que abran sin conexión aunque no se hayan visitado (los productos no
+// van aquí: se guardan completos en IndexedDB, ver datos/inventario.ts).
 // Los parámetros van en el mismo orden que los filtros de cada vista: la caché compara la URL exacta.
 export const urlsEsenciales = (): string[] => [
   construirUrl('/dashboard', { meses: 3 }),
   construirUrl('/dashboard', { meses: 6 }),
   construirUrl('/dashboard', { meses: 12 }),
-  construirUrl('/productos', { page: 1, limit: 20 }),
   construirUrl('/movimientos', { page: 1, limit: 20 }),
   construirUrl('/alertas', { page: 1, limit: 20 }),
   construirUrl('/alertas/resumen'),

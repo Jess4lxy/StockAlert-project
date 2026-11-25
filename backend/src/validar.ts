@@ -106,6 +106,36 @@ export function claveEscrita(b: Cuerpo, campo: string): string {
   return v;
 }
 
+// Clave única que genera el cliente para que un reenvío no se registre dos veces
+export function claveCliente(b: Cuerpo): string | null {
+  const v = b.clave_cliente;
+  if (vacio(v)) return null;
+  if (typeof v !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v)) throw malo('clave_cliente debe ser un UUID');
+  return v.toLowerCase();
+}
+
+// Momento en que ocurrió una operación registrada sin conexión. Se admite hasta 30 días
+// atrás (lo que dura la sesión) y 5 minutos adelante (relojes desajustados).
+export function fechaOperacion(b: Cuerpo, campo: string): string | null {
+  const v = b[campo];
+  if (vacio(v)) return null;
+  const ms = typeof v === 'string' ? Date.parse(v) : NaN;
+  if (Number.isNaN(ms)) throw malo(`${campo} debe ser una fecha ISO 8601`);
+  const diferencia = Date.now() - ms;
+  if (diferencia < -5 * 60_000) throw malo(`${campo} no puede estar en el futuro`);
+  if (diferencia > 30 * 24 * 3_600_000) throw malo(`${campo} no puede tener más de 30 días`);
+  return new Date(ms).toISOString();
+}
+
+// Código de barras: letras, números y guiones, sin espacios; null lo borra (PATCH)
+export function codigoBarras(b: Cuerpo): string | null | undefined {
+  const v = textoNulo(b, 'codigo_barras', 64);
+  if (typeof v === 'string' && !/^[0-9A-Za-z._-]{4,64}$/.test(v)) {
+    throw malo('codigo_barras debe tener de 4 a 64 letras, números, puntos, guiones o guiones bajos');
+  }
+  return v;
+}
+
 // :id de la ruta. Un id que no es entero positivo no puede existir: 404
 export function idRuta(req: Request, que: string): number {
   const id = Number(req.params.id);

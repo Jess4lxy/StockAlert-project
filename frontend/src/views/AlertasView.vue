@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue';
+import { useNotificaciones } from '@/dispositivo/notificaciones';
+import { useInventario } from '@/datos/inventario';
 import { api, mensajeDeError, type Alerta, type EstadoAlerta, type Pagina, type TipoAlerta } from '@/api';
 import {
   BaseButton,
@@ -14,6 +16,10 @@ import {
   type Columna,
   type Tono,
 } from '@/components/ui';
+
+const { version } = useInventario();
+const { soportadas, activas, bloqueadas, activar } = useNotificaciones();
+const cambiando = ref<number | null>(null);
 
 const filtros = reactive({ estado: '', tipo: '', page: 1, limit: 20 });
 const resultado = ref<Pagina<Alerta> | null>(null);
@@ -46,10 +52,29 @@ function reiniciar() {
 watch(() => [filtros.estado, filtros.tipo, filtros.limit], reiniciar);
 watch(() => filtros.page, cargar);
 
-onMounted(async () => {
-  cargar();
+async function cargarResumen() {
   resumen.value = await api.resumenAlertas().catch(() => resumen.value);
-});
+}
+function recargar() {
+  cargar();
+  cargarResumen();
+}
+onMounted(recargar);
+// Un movimiento pudo generar o atender alertas
+watch(version, recargar);
+
+async function cambiar(alerta: Alerta, estado: EstadoAlerta) {
+  cambiando.value = alerta.id_alerta;
+  error.value = '';
+  try {
+    await api.cambiarAlerta(alerta.id_alerta, estado);
+    recargar();
+  } catch (e) {
+    error.value = navigator.onLine ? mensajeDeError(e) : 'Para cambiar una alerta necesitas conexión a Internet.';
+  } finally {
+    cambiando.value = null;
+  }
+}
 
 function limpiar() {
   Object.assign(filtros, { estado: '', tipo: '' });
@@ -76,6 +101,7 @@ const columnas: Columna[] = [
   { key: 'stock_detectado', label: 'Stock detectado', align: 'right', class: 'tabular-nums' },
   { key: 'estado', label: 'Estado' },
   { key: 'fecha_atencion', label: 'Atendida', class: 'whitespace-nowrap' },
+  { key: 'acciones', label: 'Acciones', align: 'right' },
 ];
 
 const TONO_ESTADO: Record<EstadoAlerta, Tono> = { pendiente: 'error', atendida: 'exito', cerrada: 'neutro' };
@@ -87,7 +113,14 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
 
 <template>
   <section>
-    <PageHeader title="Alertas de stock" subtitle="Se generan cuando un producto baja de su stock mínimo y se cierran al reponerlo." />
+    <PageHeader title="Alertas de stock" subtitle="Se generan cuando un producto baja de su stock mínimo y se atienden solas al reponerlo.">
+      <template #actions>
+        <BaseButton v-if="soportadas && !activas" variant="outline" icon="notifications" :disabled="bloqueadas" @click="activar">
+          {{ bloqueadas ? 'Avisos bloqueados en el navegador' : 'Activar avisos' }}
+        </BaseButton>
+        <StatusBadge v-else-if="activas" tone="exito">Avisos activados</StatusBadge>
+      </template>
+    </PageHeader>
 
     <div class="grid gap-4 py-2 md:grid-cols-2">
       <StatCard label="Alertas pendientes" :value="String(resumen.pendientes)" icon="notifications" :alert="resumen.pendientes > 0">
@@ -132,6 +165,13 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
       </template>
       <template #cell-fecha_atencion="{ row }">
         <span class="text-texto-suave">{{ row.fecha_atencion ? fecha.format(new Date(row.fecha_atencion)) : '—' }}</span>
+      </template>
+      <template #cell-acciones="{ row }">
+        <div v-if="row.estado === 'pendiente'" class="flex flex-wrap gap-1 md:justify-end">
+          <BaseButton variant="ghost" icon="check" class="!h-9 !px-2 !text-sm" :loading="cambiando === row.id_alerta" @click="cambiar(row, 'atendida')">Atender</BaseButton>
+          <BaseButton variant="ghost" class="!h-9 !px-2 !text-sm" :disabled="cambiando === row.id_alerta" @click="cambiar(row, 'cerrada')">Cerrar</BaseButton>
+        </div>
+        <span v-else class="text-texto-suave">—</span>
       </template>
     </DataTable>
 

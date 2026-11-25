@@ -76,6 +76,9 @@ async function main() {
     await client.query('ROLLBACK');
     throw error;
   }
+  // Sin estadísticas PostgreSQL elige un mal plan para el dashboard (5 s en lugar de 15 ms)
+  // hasta que corre el autoanalyze
+  await client.query('ANALYZE');
 
   const segundos = ((performance.now() - inicio) / 1000).toFixed(2);
   const { rows } = await client.query(`

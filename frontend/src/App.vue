@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import PwaAvisos from '@/components/PwaAvisos.vue';
-import { AppShell, type ItemNavegacion } from '@/components/ui';
+import ColaDialog from '@/components/inventario/ColaDialog.vue';
+import { AppIcon, AppShell, BaseButton, BaseDialog, type ItemNavegacion } from '@/components/ui';
+import { alGenerarAlerta, sincronizar, usarInventarioDe, useInventario } from '@/datos/inventario';
+import { notificarAlerta, revisarAlertas } from '@/dispositivo/notificaciones';
 import { guardarDatosSinConexion } from '@/pwa/usePwa';
 import { useSesion } from '@/sesion';
 import AlertasView from '@/views/AlertasView.vue';
-import DashboardView from '@/views/DashboardView.vue';
 import EmpresasView from '@/views/EmpresasView.vue';
 import LoginView from '@/views/LoginView.vue';
 import MovimientosView from '@/views/MovimientosView.vue';
@@ -13,7 +15,13 @@ import ProductosView from '@/views/ProductosView.vue';
 import RegistroView from '@/views/RegistroView.vue';
 import UsuariosView from '@/views/UsuariosView.vue';
 
+// Las gráficas (Chart.js) van en su propio archivo: el inicio de sesión no las descarga
+const DashboardView = defineAsyncComponent(() => import('@/views/DashboardView.vue'));
+
 const { usuario, token, cerrarSesion, revisarSesion } = useSesion();
+const { cola, pendientes, rechazadas, sincronizando } = useInventario();
+const verCola = ref(false);
+const confirmarSalida = ref(false);
 
 const INVENTARIO: ItemNavegacion[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'space_dashboard' },
@@ -77,14 +85,50 @@ function ir(destino: string) {
 // se guarda la vista inicial de cada sección para usarla sin conexión. No se repite en
 // cada renovación del token. La plataforma no tiene inventario que guardar.
 watch(
-  () => [usuario.value?.id_usuario, !!token.value] as const,
+  [() => usuario.value?.id_usuario, () => !!token.value] as const,
   ([id, conToken]) => {
     if (id && conToken && usuario.value?.empresa) guardarDatosSinConexion();
   },
   { immediate: true },
 );
 
+// El inventario del dispositivo es del usuario con sesión. Se abre aunque no haya token
+// (sin conexión) y se sincroniza en cuanto lo hay.
+watch(
+  [() => (usuario.value?.empresa ? usuario.value.id_usuario : null), () => !!token.value] as const,
+  async ([id, conToken]) => {
+    await usarInventarioDe(id);
+    if (!id || !conToken) return;
+    await sincronizar();
+    void revisarAlertas(id).catch(() => {});
+  },
+  { immediate: true },
+);
+alGenerarAlerta((alerta, nombre) => {
+  if (usuario.value) void notificarAlerta(usuario.value.id_usuario, alerta, nombre);
+});
+
+// Alertas que generó otra persona: cada 5 minutos y al volver a la app
+const buscarAlertas = () => {
+  if (usuario.value?.empresa && token.value) void revisarAlertas(usuario.value.id_usuario).catch(() => {});
+};
+const alVolver = () => document.visibilityState === 'visible' && buscarAlertas();
+const reloj = setInterval(buscarAlertas, 5 * 60_000);
+document.addEventListener('visibilitychange', alVolver);
+onBeforeUnmount(() => {
+  clearInterval(reloj);
+  document.removeEventListener('visibilitychange', alVolver);
+});
+
+// Con operaciones por enviar se avisa antes de cerrar sesión
+async function pedirSalida() {
+  if (pendientes.value.length) await sincronizar();
+  if (cola.value.length) confirmarSalida.value = true;
+  else await salir();
+}
+
 async function salir() {
+  confirmarSalida.value = false;
   await cerrarSesion();
   ir('login');
 }
@@ -96,7 +140,19 @@ async function salir() {
     <LoginView v-else />
   </template>
 
-  <AppShell v-else :active="activa" :items="secciones" :usuario="datosUsuario" @update:active="ir" @salir="salir">
+  <AppShell v-else :active="activa" :items="secciones" :usuario="datosUsuario" @update:active="ir" @salir="pedirSalida">
+    <template #estado>
+      <button
+        v-if="cola.length"
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold"
+        :class="rechazadas.length ? 'bg-error-10 text-error' : 'bg-alerta-10 text-alerta'"
+        @click="verCola = true"
+      >
+        <AppIcon name="sync" :size="16" :class="{ 'animate-spin': sincronizando }" />
+        {{ rechazadas.length ? `${rechazadas.length} por revisar` : `${pendientes.length} por enviar` }}
+      </button>
+    </template>
     <!-- :key reinicia la pantalla al cambiar de cuenta, para no mostrar datos de la anterior -->
     <div :key="usuario.id_usuario">
       <EmpresasView v-if="activa === 'empresas'" @ver-usuarios="(id) => ir(`usuarios?empresa=${id}`)" />
@@ -107,5 +163,16 @@ async function salir() {
       <AlertasView v-else-if="activa === 'alertas'" />
     </div>
   </AppShell>
+
+  <ColaDialog v-model:open="verCola" />
+  <BaseDialog v-model:open="confirmarSalida" title="Tienes cambios sin enviar">
+    <p class="text-sm text-texto">
+      {{ cola.length === 1 ? 'Queda 1 operación' : `Quedan ${cola.length} operaciones` }} en este dispositivo. Se conservan y se enviarán cuando vuelvas a iniciar sesión aquí con esta cuenta.
+    </p>
+    <template #acciones>
+      <BaseButton variant="outline" @click="confirmarSalida = false">Quedarme</BaseButton>
+      <BaseButton @click="salir">Cerrar sesión</BaseButton>
+    </template>
+  </BaseDialog>
   <PwaAvisos />
 </template>

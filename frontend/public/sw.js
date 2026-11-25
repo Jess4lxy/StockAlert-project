@@ -7,11 +7,12 @@
  *  3. FETCH     -> solo peticiones GET:
  *      - API (/api/...): red primero y se guarda la respuesta; sin conexión responde con la
  *        última guardada. La consulta que nunca se hizo falla y la pantalla lo explica.
+ *        Los productos no pasan por aquí: la app los guarda completos en IndexedDB.
  *      - Navegación (HTML): red primero; si no hay conexión, responde con el index.html guardado.
  *      - Resto del mismo origen (JS, CSS, imágenes, fuentes): caché primero; si falta, red y se guarda.
  *
  * Al iniciar sesión, la app pide guardar las consultas iniciales de cada sección (mensaje
- * GUARDAR_DATOS, con el token), así dashboard, productos, movimientos y alertas abren sin
+ * GUARDAR_DATOS, con el token), así dashboard, movimientos y alertas abren sin
  * Internet. Las rutas de sesión (/api/auth/...) nunca se guardan, y al cerrar sesión la app
  * borra la caché de datos para que otra cuenta en el mismo dispositivo no los vea.
  *
@@ -52,6 +53,20 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'GUARDAR_DATOS') event.waitUntil(guardarDatos(event.data.urls, event.data.token));
 });
 
+// Al tocar una notificación se abre la app (o se trae al frente) en la sección indicada
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const ruta = event.notification.data?.ruta ?? '';
+  event.waitUntil(
+    (async () => {
+      const [abierta] = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      if (!abierta) return self.clients.openWindow(aUrl(`./${ruta}`));
+      await abierta.focus();
+      abierta.postMessage({ type: 'IR', ruta });
+    })(),
+  );
+});
+
 async function guardarDatos(urls, token) {
   const cache = await caches.open(CACHE_DATOS);
   await Promise.all(
@@ -85,8 +100,8 @@ self.addEventListener('fetch', (event) => {
 
   // La API puede estar en otro origen (VITE_API_URL), por eso se revisa antes
   if (url.pathname.startsWith('/api/')) {
-    // Sesión y documentación: siempre a la red, sin guardar
-    if (url.pathname.startsWith('/api/auth/') || url.pathname.startsWith('/api/docs') || url.pathname === '/api/openapi.json') return;
+    // Sesión, documentación y productos (IndexedDB): siempre a la red, sin guardar
+    if (url.pathname.startsWith('/api/auth/') || url.pathname.startsWith('/api/productos') || url.pathname.startsWith('/api/docs') || url.pathname === '/api/openapi.json') return;
     event.respondWith(redPrimero(request));
     return;
   }

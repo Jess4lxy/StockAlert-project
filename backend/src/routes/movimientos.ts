@@ -4,7 +4,7 @@ import { empresaDe, permitir, sesion } from '../auth/sesion.js';
 import { pool } from '../db.js';
 import { HttpError, noEncontrado } from '../errores.js';
 import { pagina, paginacion } from '../paginacion.js';
-import { cuerpo, entero, enteroQuery, fechaQuery, idRuta, opcion, opcionQuery, texto } from '../validar.js';
+import { claveCliente, cuerpo, entero, enteroQuery, fechaOperacion, fechaQuery, idRuta, opcion, opcionQuery, texto } from '../validar.js';
 
 export const movimientos = Router();
 
@@ -73,10 +73,13 @@ movimientos.get('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-// POST /api/movimientos - { id_producto, tipo_movimiento, cantidad, observaciones? }
+// POST /api/movimientos
+// { id_producto, tipo_movimiento, cantidad, observaciones?, clave_cliente?, fecha_movimiento? }
 // En una sola transacción: registra el movimiento, actualiza el stock del producto y
 // genera o atiende alertas. Los movimientos no se editan ni se borran: un error se
 // corrige con un ajuste.
+// Los registrados sin conexión traen clave_cliente (si ya se recibió, responde 200 con el
+// mismo movimiento y no lo aplica otra vez) y fecha_movimiento (cuándo ocurrió).
 movimientos.post('/', permitir('admin', 'almacen'), async (req, res) => {
   const s = sesion(req);
   const idEmpresa = empresaDe(req);
@@ -86,11 +89,14 @@ movimientos.post('/', permitir('admin', 'almacen'), async (req, res) => {
   const cantidad = entero(b, 'cantidad', { requerido: true, min: tipo === 'ajuste' ? -1_000_000 : 1, max: 1_000_000 })!;
   if (cantidad === 0) throw new HttpError(400, 'cantidad no puede ser 0');
   const observaciones = texto(b, 'observaciones', { max: 500 }) ?? null;
+  const clave = claveCliente(b);
+  const fecha = fechaOperacion(b, 'fecha_movimiento');
   const delta = tipo === 'salida' ? -cantidad : cantidad;
 
   const client = await pool.connect();
-  let alerta: AlertaGenerada | null;
-  let atendidas: number;
+  let alerta: AlertaGenerada | null = null;
+  let atendidas = 0;
+  let repetido = false;
   let idMovimiento: number;
   let producto: { id_producto: number; nombre: string; categoria: string | null; stock_actual: number; stock_minimo: number };
   try {
@@ -101,26 +107,43 @@ movimientos.post('/', permitir('admin', 'almacen'), async (req, res) => {
       [idProducto, idEmpresa],
     );
     if (!rows[0]) throw noEncontrado('Producto');
-    if (!rows[0].estado) throw new HttpError(409, 'El producto está desactivado');
-    const anterior = rows[0].stock_actual;
-    if (anterior + delta < 0) {
-      throw new HttpError(409, `Stock insuficiente: hay ${anterior} y el movimiento resta ${-delta}`);
-    }
 
-    const m = await client.query<{ id_movimiento: number }>(
-      `INSERT INTO movimientos (id_producto, id_usuario, tipo_movimiento, cantidad, observaciones)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id_movimiento::int AS id_movimiento`,
-      [idProducto, s.id_usuario, tipo, cantidad, observaciones],
-    );
-    idMovimiento = m.rows[0].id_movimiento;
-    const p = await client.query<typeof producto>(
-      `UPDATE productos SET stock_actual = stock_actual + $1, fecha_actualizacion = now()
-       WHERE id_producto = $2
-       RETURNING id_producto, nombre, categoria, stock_actual, stock_minimo`,
-      [delta, idProducto],
-    );
-    producto = p.rows[0];
-    ({ generada: alerta, atendidas } = await evaluarAlertas(client, producto, anterior));
+    const previo = clave
+      ? await client.query<{ id_movimiento: number; id_producto: number }>(
+          'SELECT id_movimiento::int AS id_movimiento, id_producto FROM movimientos WHERE clave_cliente = $1',
+          [clave],
+        )
+      : null;
+    if (previo?.rows[0]) {
+      if (previo.rows[0].id_producto !== idProducto) throw new HttpError(409, 'clave_cliente ya está en uso');
+      repetido = true;
+      idMovimiento = previo.rows[0].id_movimiento;
+      const p = await client.query<typeof producto>(
+        'SELECT id_producto, nombre, categoria, stock_actual, stock_minimo FROM productos WHERE id_producto = $1',
+        [idProducto],
+      );
+      producto = p.rows[0];
+    } else {
+      if (!rows[0].estado) throw new HttpError(409, 'El producto está desactivado');
+      const anterior = rows[0].stock_actual;
+      if (anterior + delta < 0) {
+        throw new HttpError(409, `Stock insuficiente: hay ${anterior} y el movimiento resta ${-delta}`);
+      }
+      const m = await client.query<{ id_movimiento: number }>(
+        `INSERT INTO movimientos (id_producto, id_usuario, tipo_movimiento, cantidad, observaciones, clave_cliente, fecha_movimiento)
+         VALUES ($1, $2, $3, $4, $5, $6, coalesce($7::timestamptz, now())) RETURNING id_movimiento::int AS id_movimiento`,
+        [idProducto, s.id_usuario, tipo, cantidad, observaciones, clave, fecha],
+      );
+      idMovimiento = m.rows[0].id_movimiento;
+      const p = await client.query<typeof producto>(
+        `UPDATE productos SET stock_actual = stock_actual + $1, fecha_actualizacion = now()
+         WHERE id_producto = $2
+         RETURNING id_producto, nombre, categoria, stock_actual, stock_minimo`,
+        [delta, idProducto],
+      );
+      producto = p.rows[0];
+      ({ generada: alerta, atendidas } = await evaluarAlertas(client, producto, anterior));
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -131,7 +154,7 @@ movimientos.post('/', permitir('admin', 'almacen'), async (req, res) => {
 
   const { rows } = await pool.query(`SELECT ${COLUMNAS} ${DESDE} WHERE m.id_movimiento = $1`, [idMovimiento]);
   const n8n = alerta ? await notificarN8n(alerta, idEmpresa) : false;
-  res.status(201).json({
+  res.status(repetido ? 200 : 201).json({
     movimiento: rows[0],
     producto: {
       ...producto,

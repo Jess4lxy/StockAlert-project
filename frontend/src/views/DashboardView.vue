@@ -4,8 +4,10 @@ import { api, mensajeDeError, type Dashboard } from '@/api';
 import BarChart from '@/components/charts/BarChart.vue';
 import LineChart from '@/components/charts/LineChart.vue';
 import { COLOR } from '@/components/charts/tema';
+import { compartir } from '@/dispositivo/compartir';
 import {
   AppIcon,
+  BaseButton,
   ChartCard,
   DataTable,
   FormField,
@@ -16,6 +18,7 @@ import {
   type Columna,
 } from '@/components/ui';
 
+const aviso = ref('');
 const meses = ref(6);
 const datos = ref<Dashboard | null>(null);
 const cargando = ref(false);
@@ -66,6 +69,15 @@ const variacion = computed(() => {
   return { texto: porcentaje.format(Math.abs(v)), sube: v >= 0 };
 });
 
+// Lista de compras para enviarla al proveedor por WhatsApp, correo, etc.
+async function compartirLista() {
+  const lineas = datos.value!.porReponer.map((p) => `• ${p.nombre}: faltan ${p.faltante} (hay ${p.stock_actual} de ${p.stock_minimo})`);
+  const r = await compartir('Productos por reponer', `Productos por reponer:\n${lineas.join('\n')}`).catch(() => null);
+  if (r === 'copiado') aviso.value = 'Lista copiada: pégala donde quieras enviarla.';
+  if (r === null) aviso.value = 'No se pudo compartir la lista en este navegador.';
+  if (aviso.value) setTimeout(() => (aviso.value = ''), 4000);
+}
+
 const columnasReponer: Columna[] = [
   { key: 'nombre', label: 'Producto' },
   { key: 'categoria', label: 'Categoría' },
@@ -95,6 +107,9 @@ const columnasCategoria: Columna[] = [
     </PageHeader>
 
     <p v-if="error" class="mb-3 rounded-lg bg-error-10 p-3 text-sm text-error">{{ error }}</p>
+
+    <p v-if="cargando && !datos" class="py-10 text-center text-texto-suave" role="status">Cargando indicadores…</p>
+    <p v-if="aviso" class="mb-3 rounded-lg bg-exito-10 p-3 text-sm text-exito" role="status">{{ aviso }}</p>
 
     <div v-if="datos" class="space-y-4 py-3 transition-opacity" :class="{ 'opacity-60': cargando }">
       <!-- Indicadores -->
@@ -161,7 +176,10 @@ const columnasCategoria: Columna[] = [
 
       <!-- Detalle del primer indicador -->
       <div>
-        <h2 class="mb-3 text-base font-semibold text-texto">Productos por reponer</h2>
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold text-texto">Productos por reponer</h2>
+          <BaseButton v-if="datos.porReponer.length" variant="outline" icon="share" @click="compartirLista">Compartir lista</BaseButton>
+        </div>
         <DataTable
           :columns="columnasReponer"
           :rows="datos.porReponer"

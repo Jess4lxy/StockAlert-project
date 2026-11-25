@@ -72,8 +72,12 @@ const cuerpoJsonVarios = (schema: string, examples: Record<string, { summary: st
   content: { 'application/json': { schema: ref(schema), examples } },
 });
 
+// Contenido de una foto: la imagen tal cual, sin JSON ni multipart
+const TIPOS_FOTO = ['image/jpeg', 'image/png', 'image/webp'];
+const contenidoFoto = Object.fromEntries(TIPOS_FOTO.map((tipo) => [tipo, { schema: { type: 'string', format: 'binary' } }]));
+
 // Mismo texto que noEncontrado() en errores.ts: "Producto no encontrado", "Solicitud no encontrada"
-const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud']);
+const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud', 'Foto']);
 const noEncontradoRespuesta = (que: string, descripcion = `${que} inexistente o de otra empresa`) =>
   errorRespuesta(`${que} no ${FEMENINOS.has(que) ? 'encontrada' : 'encontrado'}`, descripcion);
 
@@ -152,16 +156,21 @@ const ejemploUsuario = {
   empresa: 'Tienda Demo StockAlert',
 };
 
+// Clave de ejemplo de una operación registrada sin conexión (UUID que genera el cliente)
+const ejemploClave = '5b0c2f4e-9d1a-4c37-8e62-1f7a3d9b6c20';
+
 const ejemploProducto = {
   id_producto: 10,
   nombre: 'Hojas blancas paquete 500',
   descripcion: 'Papel bond tamaño carta, 75 g/m²',
   categoria: 'Papelería',
+  codigo_barras: '7501234567893',
   stock_actual: 5,
   stock_minimo: 10,
   precio: 77.5,
   fecha_actualizacion: '2026-10-26T22:23:00.000Z',
   estado: true,
+  foto_fecha: null,
   estado_stock: 'bajo',
 };
 
@@ -185,6 +194,32 @@ const ejemploMovimiento = {
   categoria: 'Papelería',
   id_usuario: 8,
   usuario: 'Miguel Balam Can',
+};
+
+const ejemploMovimientoRegistrado = {
+  movimiento: {
+    id_movimiento: 10001,
+    fecha_movimiento: '2026-11-22T17:40:12.000Z',
+    tipo_movimiento: 'salida',
+    cantidad: 3,
+    observaciones: null,
+    id_producto: 10,
+    producto: 'Hojas blancas paquete 500',
+    categoria: 'Papelería',
+    id_usuario: 3,
+    usuario: 'Daniela Pech Ek',
+  },
+  producto: {
+    id_producto: 10,
+    nombre: 'Hojas blancas paquete 500',
+    categoria: 'Papelería',
+    stock_actual: 9,
+    stock_minimo: 10,
+    estado_stock: 'bajo',
+  },
+  alerta_generada: { ...ejemploAlertaGenerada, stock_detectado: 9 },
+  alertas_atendidas: 0,
+  n8n_notificado: true,
 };
 
 const ejemploSolicitud = {
@@ -219,7 +254,7 @@ export const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'StockAlert API',
-    version: '2.1.0',
+    version: '2.2.0',
     description: [
       'API REST de **StockAlert**, inventario inteligente para pequeños negocios.',
       '',
@@ -248,13 +283,18 @@ export const openapi = {
       '- Al generarse una alerta se avisa a un flujo de n8n (ver la sección **Webhooks**: `alertaGenerada`). El flujo avisa por correo a los administradores y registra una **solicitud de reposición** con `POST /integraciones/n8n/solicitudes`; el equipo le da seguimiento en `/solicitudes`.',
       '- Nada se borra: productos, usuarios y empresas se desactivan (`estado: false`) y los movimientos se corrigen con un ajuste.',
       '',
+      '**Trabajo sin conexión**',
+      '- El cliente puede guardar altas de productos y movimientos mientras no hay red y enviarlos después. Para que un reenvío no se registre dos veces, genera un UUID por operación y lo envía en `clave_cliente` (opcional) en `POST /productos` y `POST /movimientos`; al reintentar manda **la misma clave**.',
+      '- La primera vez responde **201**. Si la operación ya se había recibido responde **200** con el registro existente y no vuelve a aplicarse (ni cambia el stock, ni genera alertas, ni avisa a n8n). Si la clave ya se usó en otra empresa o en otro producto, responde **409**.',
+      '- `fecha_movimiento` (opcional, en `POST /movimientos`) indica cuándo ocurrió el movimiento. No puede tener más de 30 días ni estar más de 5 minutos en el futuro. El stock se valida al recibirlo, no en esa fecha.',
+      '',
       '**Formato**',
       '- La empresa de demostración (*Tienda Demo StockAlert*) tiene datos **ficticios**: un año simulado con 93 productos, 10,000 movimientos y 208 alertas.',
       '- Búsqueda, filtros y paginación se resuelven en el servidor: cada respuesta trae solo la página pedida.',
       '- Las fechas van en ISO 8601 (UTC). El negocio está en Mérida (UTC−6).',
       '- Paginación: `limit` acepta 10, 20, 50 o 100 (otro valor usa 20) y `page` empieza en 1 (un valor inválido usa 1).',
       '- Los errores siempre tienen la forma `{ "error": "mensaje en español" }`.',
-      '- Los cuerpos van en JSON (`Content-Type: application/json`, máximo 100 kB). Los textos se guardan sin espacios al inicio ni al final y los correos en minúsculas.',
+      '- Los cuerpos van en JSON (`Content-Type: application/json`, máximo 100 KB), salvo `PUT /productos/{id}/foto`, que recibe la imagen (máximo 400 KB). Un cuerpo más grande responde 413. Los textos se guardan sin espacios al inicio ni al final y los correos en minúsculas.',
     ].join('\n'),
   },
   servers: [
@@ -763,6 +803,15 @@ export const openapi = {
           },
           parametro('categoria'),
           {
+            name: 'codigo',
+            in: 'query',
+            description:
+              'Código de barras exacto (distingue mayúsculas). Es único en la empresa, así que devuelve a lo más un producto; ' +
+              'usa `activo=todos` para encontrarlo aunque esté desactivado.',
+            schema: { type: 'string' },
+            example: '7501234567893',
+          },
+          {
             name: 'activo',
             in: 'query',
             description: '`true`: solo activos · `false`: solo desactivados · `todos`: ambos',
@@ -788,15 +837,20 @@ export const openapi = {
         description:
           'Solo rol `admin`; el producto queda en su empresa. Si `stock_inicial` es mayor que 0 se registra además un movimiento de ' +
           'entrada con la observación "Inventario inicial", para que el historial cuadre con el stock. ' +
-          'Si el stock inicial queda por debajo del mínimo se genera una alerta (devuelta en `alerta_generada`) y se avisa a n8n.',
+          'Si el stock inicial queda por debajo del mínimo se genera una alerta (devuelta en `alerta_generada`) y se avisa a n8n.\n\n' +
+          'El código de barras no se puede repetir en la empresa, ni siquiera con el de un producto desactivado.\n\n' +
+          '**Idempotente con `clave_cliente`**: si la empresa ya envió un alta con esa clave, responde 200 con el producto existente ' +
+          '(como está ahora, con `alerta_generada: null`) sin crear otro ni comparar los demás campos.',
         operationId: 'crearProducto',
         requestBody: cuerpoJson('ProductoNuevo', {
           nombre: 'Hojas blancas paquete 500',
           descripcion: 'Papel bond tamaño carta, 75 g/m²',
           categoria: 'Papelería',
+          codigo_barras: '7501234567893',
           precio: 77.5,
           stock_minimo: 10,
           stock_inicial: 5,
+          clave_cliente: ejemploClave,
         }),
         responses: {
           201: json('Producto creado', ref('ProductoGuardado'), {
@@ -805,6 +859,12 @@ export const openapi = {
             fecha_actualizacion: '2026-11-22T17:40:12.000Z',
             alerta_generada: { ...ejemploAlertaGenerada, id_producto: 94 },
           }),
+          200: json('Ya se había recibido un alta con esa clave_cliente: se devuelve el producto existente, sin cambios', ref('ProductoGuardado'), {
+            ...ejemploProducto,
+            id_producto: 94,
+            fecha_actualizacion: '2026-11-22T17:40:12.000Z',
+            alerta_generada: null,
+          }),
           400: errorCuerpo(
             'nombre es obligatorio',
             'precio es obligatorio',
@@ -812,9 +872,15 @@ export const openapi = {
             'stock_minimo debe ser un número entero',
             'stock_inicial debe ser mayor o igual a 0',
             'categoria admite como máximo 80 caracteres',
+            'codigo_barras debe tener de 4 a 64 letras, números, puntos, guiones o guiones bajos',
+            'clave_cliente debe ser un UUID',
           ),
           401: respuesta('NoAutenticado'),
           403: respuesta('ProhibidoInventario'),
+          409: erroresRespuesta('El código de barras ya lo tiene otro producto de la empresa, o la clave ya se usó en otra empresa', [
+            'Otro producto ya tiene ese código de barras',
+            'clave_cliente ya está en uso',
+          ]),
           500: error500,
         },
       },
@@ -838,13 +904,14 @@ export const openapi = {
         tags: ['Productos'],
         summary: 'Editar un producto',
         description:
-          'Solo rol `admin`. Se envían solo los campos a cambiar; `descripcion` y `categoria` se borran con `null` o `""`. ' +
+          'Solo rol `admin`. Se envían solo los campos a cambiar; `descripcion`, `categoria` y `codigo_barras` se borran con `null` o `""`. ' +
           'El **stock no se edita aquí**: enviar `stock_actual` responde 400 (usa un movimiento de ajuste). ' +
           'Si cambia `stock_minimo` se reevalúan las alertas: puede generarse una (devuelta en `alerta_generada` y avisada a n8n) ' +
           'o atenderse las pendientes si el stock ya alcanza el nuevo mínimo. Con `estado: false/true` se desactiva o reactiva.',
         operationId: 'editarProducto',
         requestBody: cuerpoJsonVarios('ProductoCambios', {
           precio: { summary: 'Cambiar precio y mínimo', value: { precio: 82, stock_minimo: 12 } },
+          codigo: { summary: 'Asignar el código de barras', value: { codigo_barras: '7501234567893' } },
           borrarCategoria: { summary: 'Quitar la categoría', value: { categoria: null } },
           reactivar: { summary: 'Reactivar', value: { estado: true } },
         }),
@@ -858,7 +925,8 @@ export const openapi = {
           }),
           400: errorCuerpo(
             'El stock no se edita directamente: registra un movimiento de ajuste',
-            'Envía al menos un campo: nombre, descripcion, categoria, precio, stock_minimo o estado',
+            'Envía al menos un campo: nombre, descripcion, categoria, codigo_barras, precio, stock_minimo o estado',
+            'codigo_barras debe tener de 4 a 64 letras, números, puntos, guiones o guiones bajos',
             'precio debe ser un número',
             'stock_minimo debe ser mayor o igual a 0',
             'estado debe ser true o false',
@@ -866,6 +934,7 @@ export const openapi = {
           401: respuesta('NoAutenticado'),
           403: respuesta('ProhibidoInventario'),
           404: respuesta('ProductoNoEncontrado'),
+          409: errorRespuesta('Otro producto ya tiene ese código de barras', 'El código de barras ya lo tiene otro producto de la empresa (activo o no)'),
           500: error500,
         },
       },
@@ -879,6 +948,79 @@ export const openapi = {
         operationId: 'desactivarProducto',
         responses: {
           204: { description: 'Producto desactivado (sin cuerpo)' },
+          401: respuesta('NoAutenticado'),
+          403: respuesta('ProhibidoInventario'),
+          404: respuesta('ProductoNoEncontrado'),
+          500: error500,
+        },
+      },
+    },
+    '/productos/{id}/foto': {
+      parameters: [parametro('id')],
+      get: {
+        tags: ['Productos'],
+        summary: 'Obtener la foto de un producto',
+        description:
+          'Roles `admin` y `almacen`. ' + alcanceEmpresa + ' Devuelve la imagen. Exige el encabezado `Authorization`, así que no sirve ' +
+          'directamente como `src` de una imagen: descárgala con `fetch`. Para saber si hay foto o si cambió sin pedirla, usa `foto_fecha` del producto.',
+        operationId: 'obtenerFotoProducto',
+        responses: {
+          200: {
+            description: 'Imagen del producto, con el tipo detectado al subirla',
+            headers: {
+              'Cache-Control': {
+                description: 'Solo puede guardarla el navegador del usuario, y la revalida en cada uso',
+                schema: { type: 'string', const: 'private, no-cache' },
+              },
+              'X-Content-Type-Options': {
+                description: 'El navegador no debe adivinar otro tipo de contenido',
+                schema: { type: 'string', const: 'nosniff' },
+              },
+            },
+            content: contenidoFoto,
+          },
+          401: respuesta('NoAutenticado'),
+          403: respuesta('SinInventario'),
+          404: erroresRespuesta('El producto no tiene foto, no existe o es de otra empresa (si el id no es un entero positivo, el segundo mensaje)', [
+            'Foto no encontrada',
+            'Producto no encontrado',
+          ]),
+          500: error500,
+        },
+      },
+      put: {
+        tags: ['Productos'],
+        summary: 'Subir o reemplazar la foto de un producto',
+        description:
+          'Solo rol `admin`. El cuerpo es **la imagen tal cual** (no JSON ni formulario), con su `Content-Type`: `image/jpeg`, `image/png` o `image/webp`. ' +
+          'Máximo 400 KB: el cliente debe comprimirla antes de enviarla. El tipo real se verifica con los primeros bytes del archivo y es el que se guarda, ' +
+          'aunque el `Content-Type` indique otro de los permitidos. Reemplaza la foto anterior y actualiza `foto_fecha`.',
+        operationId: 'subirFotoProducto',
+        requestBody: { required: true, description: 'Imagen JPEG, PNG o WebP de máximo 400 KB', content: contenidoFoto },
+        responses: {
+          200: json('Producto con su foto nueva (`foto_fecha`)', ref('Producto'), {
+            ...ejemploProducto,
+            fecha_actualizacion: '2026-11-22T17:48:00.000Z',
+            foto_fecha: '2026-11-22T17:48:00.000Z',
+          }),
+          400: errorRespuesta(
+            'Envía una imagen JPEG, PNG o WebP en el cuerpo de la petición',
+            'Falta el cuerpo, el Content-Type no es de los permitidos o el contenido no es una imagen JPEG, PNG o WebP',
+          ),
+          401: respuesta('NoAutenticado'),
+          403: respuesta('ProhibidoInventario'),
+          404: respuesta('ProductoNoEncontrado'),
+          413: respuesta('CuerpoDemasiadoGrande'),
+          500: error500,
+        },
+      },
+      delete: {
+        tags: ['Productos'],
+        summary: 'Quitar la foto de un producto',
+        description: 'Solo rol `admin`. Borra la foto (`foto_fecha` queda en `null`). Si el producto no tenía foto también responde 204.',
+        operationId: 'quitarFotoProducto',
+        responses: {
+          204: { description: 'Foto eliminada (sin cuerpo)' },
           401: respuesta('NoAutenticado'),
           403: respuesta('ProhibidoInventario'),
           404: respuesta('ProductoNoEncontrado'),
@@ -965,7 +1107,10 @@ export const openapi = {
           '(`agotado` si llegó a 0, si no `stock_bajo`); si llega a 0 y la pendiente era de stock bajo, genera además la de agotado; ' +
           'si el stock alcanza el mínimo, las pendientes pasan a `atendida`.\n\n' +
           'Si se generó una alerta, se avisa a n8n después de confirmar (webhook `alertaGenerada`); si n8n falla, el movimiento no se revierte ' +
-          'y `n8n_notificado` es `false`. Los movimientos no se editan ni se borran: un error se corrige con un ajuste.',
+          'y `n8n_notificado` es `false`. Los movimientos no se editan ni se borran: un error se corrige con un ajuste.\n\n' +
+          '**Idempotente con `clave_cliente`**: si ya se recibió un movimiento del mismo producto con esa clave, responde 200 con ese mismo movimiento ' +
+          'y no lo aplica otra vez (ni compara los demás campos). `producto` trae el stock actual, `alerta_generada` es `null`, `alertas_atendidas` es 0 y ' +
+          '`n8n_notificado` es `false`. Los movimientos guardados sin conexión envían además `fecha_movimiento`: cuándo ocurrieron.',
         operationId: 'registrarMovimiento',
         requestBody: cuerpoJsonVarios('MovimientoNuevo', {
           salida: { summary: 'Venta (salida)', value: { id_producto: 10, tipo_movimiento: 'salida', cantidad: 3 } },
@@ -977,32 +1122,23 @@ export const openapi = {
             summary: 'Corrección por conteo físico (ajuste negativo)',
             value: { id_producto: 10, tipo_movimiento: 'ajuste', cantidad: -2, observaciones: 'Merma: paquetes mojados' },
           },
-        }),
-        responses: {
-          201: json('Movimiento registrado', ref('MovimientoRegistrado'), {
-            movimiento: {
-              id_movimiento: 10001,
-              fecha_movimiento: '2026-11-22T17:40:12.000Z',
+          sinConexion: {
+            summary: 'Venta registrada sin conexión',
+            value: {
+              id_producto: 10,
               tipo_movimiento: 'salida',
               cantidad: 3,
-              observaciones: null,
-              id_producto: 10,
-              producto: 'Hojas blancas paquete 500',
-              categoria: 'Papelería',
-              id_usuario: 3,
-              usuario: 'Daniela Pech Ek',
+              clave_cliente: ejemploClave,
+              fecha_movimiento: '2026-11-22T17:40:12.000Z',
             },
-            producto: {
-              id_producto: 10,
-              nombre: 'Hojas blancas paquete 500',
-              categoria: 'Papelería',
-              stock_actual: 9,
-              stock_minimo: 10,
-              estado_stock: 'bajo',
-            },
-            alerta_generada: { ...ejemploAlertaGenerada, stock_detectado: 9 },
-            alertas_atendidas: 0,
-            n8n_notificado: true,
+          },
+        }),
+        responses: {
+          201: json('Movimiento registrado', ref('MovimientoRegistrado'), ejemploMovimientoRegistrado),
+          200: json('Ya se había recibido ese movimiento (misma clave_cliente): se devuelve el mismo, sin aplicarlo otra vez', ref('MovimientoRegistrado'), {
+            ...ejemploMovimientoRegistrado,
+            alerta_generada: null,
+            n8n_notificado: false,
           }),
           400: errorCuerpo(
             'id_producto es obligatorio',
@@ -1012,13 +1148,18 @@ export const openapi = {
             'cantidad no puede ser 0',
             'cantidad debe ser menor o igual a 1000000',
             'observaciones admite como máximo 500 caracteres',
+            'clave_cliente debe ser un UUID',
+            'fecha_movimiento debe ser una fecha ISO 8601',
+            'fecha_movimiento no puede estar en el futuro',
+            'fecha_movimiento no puede tener más de 30 días',
           ),
           401: respuesta('NoAutenticado'),
           403: respuesta('ProhibidoInventario'),
           404: respuesta('ProductoNoEncontrado'),
-          409: erroresRespuesta('El movimiento no se puede aplicar', [
+          409: erroresRespuesta('El movimiento no se puede aplicar, o la clave ya se usó con otro producto', [
             'Stock insuficiente: hay 5 y el movimiento resta 6',
             'El producto está desactivado',
+            'clave_cliente ya está en uso',
           ]),
           500: error500,
         },
@@ -1511,6 +1652,10 @@ export const openapi = {
       MovimientoNoEncontrado: noEncontradoRespuesta('Movimiento'),
       AlertaNoEncontrada: noEncontradoRespuesta('Alerta'),
       SolicitudNoEncontrada: noEncontradoRespuesta('Solicitud'),
+      CuerpoDemasiadoGrande: errorRespuesta(
+        'El cuerpo de la petición es demasiado grande (máximo 100 KB; 400 KB en fotos)',
+        'El cuerpo rebasa el máximo: 100 KB en JSON, 400 KB en fotos',
+      ),
     },
     parameters: {
       id: {
@@ -1732,11 +1877,13 @@ export const openapi = {
           'nombre',
           'descripcion',
           'categoria',
+          'codigo_barras',
           'stock_actual',
           'stock_minimo',
           'precio',
           'fecha_actualizacion',
           'estado',
+          'foto_fecha',
           'estado_stock',
         ],
         properties: {
@@ -1744,11 +1891,17 @@ export const openapi = {
           nombre: { type: 'string', maxLength: 150 },
           descripcion: { type: ['string', 'null'], maxLength: 2000 },
           categoria: { type: ['string', 'null'], maxLength: 80 },
+          codigo_barras: { type: ['string', 'null'], maxLength: 64, description: 'Único en la empresa; null si no tiene' },
           stock_actual: { type: 'integer', minimum: 0 },
           stock_minimo: { type: 'integer', minimum: 0 },
           precio: { type: 'number', minimum: 0, description: 'Precio en pesos mexicanos' },
           fecha_actualizacion: { type: 'string', format: 'date-time' },
           estado: { type: 'boolean', description: 'false: desactivado (no acepta movimientos)' },
+          foto_fecha: {
+            type: ['string', 'null'],
+            format: 'date-time',
+            description: 'Cuándo cambió la foto (se pide en `GET /productos/{id}/foto`); null si no tiene',
+          },
           estado_stock: ref('EstadoStock'),
         },
       },
@@ -1780,6 +1933,11 @@ export const openapi = {
           nombre: { type: 'string', minLength: 1, maxLength: 150 },
           descripcion: { type: ['string', 'null'], maxLength: 2000 },
           categoria: { type: ['string', 'null'], maxLength: 80, description: 'Texto libre; las existentes se consultan en `GET /categorias`' },
+          codigo_barras: {
+            type: ['string', 'null'],
+            pattern: '^[0-9A-Za-z._-]{4,64}$',
+            description: 'De 4 a 64 letras (sin acentos), números, puntos, guiones o guiones bajos, sin espacios. Único en la empresa.',
+          },
           precio: { type: 'number', minimum: 0, exclusiveMaximum: 10000000000, description: 'Se redondea a 2 decimales' },
           stock_minimo: { type: 'integer', minimum: 0, maximum: 1000000000 },
           stock_inicial: {
@@ -1788,6 +1946,11 @@ export const openapi = {
             maximum: 1000000000,
             default: 0,
             description: 'Si es mayor que 0 se registra como movimiento de entrada "Inventario inicial"',
+          },
+          clave_cliente: {
+            type: ['string', 'null'],
+            format: 'uuid',
+            description: 'UUID que genera el cliente por cada alta. Al reenviar la misma clave se devuelve el producto ya creado (200).',
           },
         },
       },
@@ -1799,6 +1962,11 @@ export const openapi = {
           nombre: { type: 'string', minLength: 1, maxLength: 150 },
           descripcion: { type: ['string', 'null'], maxLength: 2000, description: 'null o "" la borra' },
           categoria: { type: ['string', 'null'], maxLength: 80, description: 'null o "" la borra' },
+          codigo_barras: {
+            type: ['string', 'null'],
+            pattern: '^([0-9A-Za-z._-]{4,64})?$',
+            description: 'De 4 a 64 letras (sin acentos), números, puntos, guiones o guiones bajos, sin espacios. Único en la empresa; null o "" lo borra.',
+          },
           precio: { type: 'number', minimum: 0, exclusiveMaximum: 10000000000, description: 'Se redondea a 2 decimales' },
           stock_minimo: { type: 'integer', minimum: 0, maximum: 1000000000 },
           estado: { type: 'boolean', description: 'false lo desactiva; true lo reactiva' },
@@ -1820,7 +1988,11 @@ export const openapi = {
         ],
         properties: {
           id_movimiento: { type: 'integer' },
-          fecha_movimiento: { type: 'string', format: 'date-time' },
+          fecha_movimiento: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Cuándo ocurrió: la fecha enviada al registrarlo o, si no se envió, la hora en que se registró',
+          },
           tipo_movimiento: { type: 'string', enum: ['entrada', 'salida', 'ajuste'] },
           cantidad: {
             type: 'integer',
@@ -1850,11 +2022,23 @@ export const openapi = {
               'Una salida o ajuste que dejaría el stock negativo responde 409.',
           },
           observaciones: { type: ['string', 'null'], maxLength: 500 },
+          clave_cliente: {
+            type: ['string', 'null'],
+            format: 'uuid',
+            description: 'UUID que genera el cliente por cada movimiento. Al reenviar la misma clave se devuelve el movimiento ya registrado (200).',
+          },
+          fecha_movimiento: {
+            type: ['string', 'null'],
+            format: 'date-time',
+            description:
+              'Cuándo ocurrió, en ISO 8601 con zona horaria: no más de 30 días atrás ni más de 5 minutos en el futuro. ' +
+              'Si se omite, se usa la hora del servidor.',
+          },
         },
       },
       ProductoStock: {
         type: 'object',
-        description: 'Stock del producto después del movimiento',
+        description: 'Stock del producto después del movimiento (el actual, si el movimiento ya se había recibido)',
         required: ['id_producto', 'nombre', 'categoria', 'stock_actual', 'stock_minimo', 'estado_stock'],
         properties: {
           id_producto: { type: 'integer' },

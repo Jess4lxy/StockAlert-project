@@ -27,6 +27,8 @@ const logo = `${import.meta.env.BASE_URL}favicon.svg`;
         <span class="ml-4 hidden text-sm text-white/70 md:inline">Inventario inteligente para tu negocio</span>
 
         <div class="ml-auto flex items-center gap-2">
+          <!-- Estado de la sincronización (App.vue) -->
+          <slot name="estado" />
           <span
             v-if="!enLinea"
             class="inline-flex items-center gap-1.5 rounded-full bg-alerta-10 px-3 py-1 text-xs font-semibold text-alerta"
@@ -43,7 +45,7 @@ const logo = `${import.meta.env.BASE_URL}favicon.svg`;
           <button
             v-if="puedeInstalar"
             type="button"
-            class="inline-flex h-9 items-center gap-2 rounded-lg bg-naranja px-3 text-sm font-semibold text-white transition-colors hover:brightness-110"
+            class="inline-flex h-9 items-center gap-2 rounded-lg bg-naranja px-3 text-sm font-semibold text-marino-70 transition-colors hover:brightness-110"
             @click="instalar"
           >
             <AppIcon name="download" :size="18" />

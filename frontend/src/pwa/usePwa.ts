@@ -85,6 +85,11 @@ function registrarServiceWorker() {
     })
     .catch((error) => console.error('No se pudo registrar el Service Worker:', error));
 
+  // Toque en una notificación: ir a la sección que indica
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'IR' && /^#\/[a-z]+$/.test(e.data.ruta)) window.location.hash = e.data.ruta;
+  });
+
   // Cuando la versión nueva toma el control (tras SKIP_WAITING) se recarga para usarla.
   // El primer cambio de controlador en una página sin SW previo es solo la instalación inicial.
   let controlado = !!navigator.serviceWorker.controller;

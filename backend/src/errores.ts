@@ -12,7 +12,7 @@ export class HttpError extends Error {
 }
 
 // "Producto no encontrado", "Alerta no encontrada": concuerda con el género del sustantivo
-const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud']);
+const FEMENINOS = new Set(['Empresa', 'Alerta', 'Solicitud', 'Foto']);
 export const noEncontrado = (que: string) => new HttpError(404, `${que} no ${FEMENINOS.has(que) ? 'encontrada' : 'encontrado'}`);
 
 // Errores de PostgreSQL que provienen de datos del cliente (no son fallas del servidor)
@@ -35,7 +35,7 @@ export const manejarError: ErrorRequestHandler = (error, _req, res, _next) => {
     return;
   }
   if (error?.type === 'entity.too.large') {
-    res.status(413).json({ error: 'El cuerpo de la petición es demasiado grande (máximo 100 KB)' });
+    res.status(413).json({ error: 'El cuerpo de la petición es demasiado grande (máximo 100 KB; 400 KB en fotos)' });
     return;
   }
   const pg = ERRORES_PG[error?.code];

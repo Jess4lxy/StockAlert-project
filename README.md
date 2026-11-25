@@ -123,8 +123,20 @@ Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, al
 | Rol | Quién es | Pantallas |
 |---|---|---|
 | `plataforma` | Los 2 administradores precargados (`ADMIN1_*`, `ADMIN2_*`); no pertenecen a ninguna empresa | **Empresas** (crear con su administrador, renombrar, activar o desactivar) y **Usuarios** de todas las empresas |
-| `admin` | Dueño de una empresa | Inventario completo y **Usuarios** de su empresa. En la API, además crea, edita y desactiva productos |
-| `almacen` | Encargado de almacén | Inventario. En la API registra movimientos y atiende alertas |
+| `admin` | Dueño de una empresa | Inventario completo (crea, edita y desactiva productos) y **Usuarios** de su empresa |
+| `almacen` | Encargado de almacén | Inventario: consulta, registra movimientos y atiende alertas |
+
+### Trabajo sin conexión y capacidades del dispositivo
+
+| Capacidad | Dónde está | Qué hace |
+|---|---|---|
+| IndexedDB | [`datos/bd.ts`](frontend/src/datos/bd.ts) | Una base por usuario (`stockalert-u<id>`): copia del catálogo, cola de operaciones, fotos y datos sueltos. Al cerrar sesión solo se conserva la cola |
+| Sincronización | [`datos/inventario.ts`](frontend/src/datos/inventario.ts) | Toda escritura se envía al momento o entra a la cola; se envía en orden al volver la red (evento `online`, al abrir la app y cada 15 s) |
+| Cámara | [`dispositivo/escaner.ts`](frontend/src/dispositivo/escaner.ts), [`foto.ts`](frontend/src/dispositivo/foto.ts) | Código de barras con `BarcodeDetector` o ZXing, y foto del producto reducida a 800 px antes de guardarse |
+| Notificaciones | [`dispositivo/notificaciones.ts`](frontend/src/dispositivo/notificaciones.ts) | Aviso del sistema cuando un producto baja de su mínimo (se activa en Alertas) |
+| Compartir | [`dispositivo/compartir.ts`](frontend/src/dispositivo/compartir.ts) | Lista de productos por reponer con Web Share; sin soporte, se copia |
+
+Cada alta y movimiento lleva una `clave_cliente` (UUID): si se reenvía porque se perdió la respuesta, la API la reconoce y no la aplica dos veces. Los movimientos conservan en `fecha_movimiento` cuándo ocurrieron. Lo que la API rechaza (por ejemplo, stock insuficiente) queda en **Pendientes de enviar** con su motivo, para reintentarlo o descartarlo. Si dos personas editan el mismo producto, se guarda el último cambio de cada campo. Sin conexión no se pueden atender alertas ni administrar usuarios y empresas.
 
 ### Pantallas del inventario
 
@@ -150,7 +162,7 @@ Todo exige `Authorization: Bearer <token>`, salvo `GET /api/salud`, `POST /api/a
 | Sesión | `POST /auth/login`, `POST /auth/registro`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/yo`, `PATCH /auth/contrasena` | Público / cualquier sesión |
 | Empresas | `GET` y `POST /empresas`; `GET` y `PATCH /empresas/:id` | `plataforma` |
 | Usuarios | `GET` y `POST /usuarios`; `GET` y `PATCH /usuarios/:id` | `plataforma` (todas las empresas) y `admin` (la suya) |
-| Productos | `GET /productos`, `GET /productos/:id`; `POST`, `PATCH` y `DELETE` (desactiva) | Consultar: `admin` y `almacen`. Escribir: `admin` |
+| Productos | `GET /productos`, `GET /productos/:id`; `POST`, `PATCH` y `DELETE` (desactiva); `GET`, `PUT` y `DELETE /productos/:id/foto` | Consultar: `admin` y `almacen`. Escribir: `admin` |
 | Movimientos | `GET /movimientos` (también por `id_producto`, `desde` y `hasta`), `GET /movimientos/:id`, `POST /movimientos` | Registrar: `admin` y `almacen` |
 | Alertas | `GET /alertas`, `GET /alertas/resumen`, `GET /alertas/:id`, `PATCH /alertas/:id` (estado) | Cambiar estado: `admin` y `almacen` |
 | Solicitudes de reposición | `GET /solicitudes`, `GET /solicitudes/resumen`, `GET /solicitudes/:id`, `PATCH /solicitudes/:id` (estado, cantidad, notas) | `admin` y `almacen` |
@@ -224,7 +236,7 @@ cloudflared tunnel --url http://localhost:4173
 
 La URL cambia cada vez que se reinicia el túnel, y la app instalada queda ligada a la URL con la que se instaló. Cualquiera con la URL puede consultar la app mientras el túnel esté abierto. Para volver a compilar contra la API local, abre otra terminal, sin `VITE_API_URL` definida.
 
-**Sin conexión:** la API se consulta con *red primero* y cada respuesta se guarda en el dispositivo. Al arrancar, la app también guarda la vista inicial de cada sección y los tres periodos del dashboard. Sin conexión se muestra lo último guardado. Una consulta que nunca se hizo (otra página o filtro) muestra un mensaje que lo explica. La app es de solo consulta, así que no hay cambios pendientes por sincronizar.
+**Sin conexión:** los productos se guardan completos en IndexedDB, así que se buscan, filtran y registran sin Internet (ver [Trabajo sin conexión](#trabajo-sin-conexión-y-capacidades-del-dispositivo)). El dashboard, los movimientos y las alertas se consultan con *red primero*: el Service Worker guarda cada respuesta y sin conexión muestra la última. Una consulta que nunca se hizo (otra página o filtro) muestra un mensaje que lo explica.
 
 ## Dashboard y prueba de rendimiento (Tarea 3)
 

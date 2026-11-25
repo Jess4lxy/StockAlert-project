@@ -7,6 +7,7 @@
 
 import { computed, ref } from 'vue';
 import { api, configurarSesion, refrescarSesion, type Sesion, type UsuarioSesion } from '@/api';
+import { bd } from '@/datos/bd';
 
 const CLAVE = 'stockalert-sesion';
 // Respuestas de la API que guarda el Service Worker (ver public/sw.js)
@@ -38,6 +39,7 @@ function guardar(sesion: Sesion) {
 }
 
 async function olvidar(motivo: string) {
+  const anterior = usuarioActual.value;
   aviso.value = motivo;
   usuarioActual.value = null;
   token.value = null;
@@ -49,6 +51,8 @@ async function olvidar(motivo: string) {
   }
   // Los datos guardados para usar sin conexión son de esta cuenta: no deben verlos otras
   await caches?.delete(CACHE_DATOS).catch(() => {});
+  // Del inventario del dispositivo solo queda lo que falta por enviar
+  if (anterior) await bd.olvidarDatos(anterior.id_usuario).catch(() => {});
 }
 
 configurarSesion(null, {

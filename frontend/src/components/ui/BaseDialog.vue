@@ -1,3 +1,8 @@
+<script lang="ts">
+// Ventanas abiertas, de abajo hacia arriba: Escape cierra solo la de encima
+const pila: symbol[] = [];
+</script>
+
 <script setup lang="ts">
 // Ventana modal con título, contenido y acciones al pie. Se cierra con Escape,
 // con la X o con clic fuera del panel. El foco entra al abrir y vuelve al cerrar.
@@ -11,30 +16,35 @@ const panel = ref<HTMLElement | null>(null);
 let focoPrevio: HTMLElement | null = null;
 
 function teclado(e: KeyboardEvent) {
-  if (e.key === 'Escape') abierto.value = false;
+  if (e.key === 'Escape' && pila.at(-1) === yo) abierto.value = false;
+}
+
+const yo = Symbol('dialogo');
+function soltar() {
+  const i = pila.indexOf(yo);
+  if (i >= 0) pila.splice(i, 1);
+  document.removeEventListener('keydown', teclado);
+  if (!pila.length) document.body.style.overflow = '';
 }
 
 watch(
   abierto,
   async (valor) => {
     if (valor) {
+      pila.push(yo);
       focoPrevio = document.activeElement as HTMLElement | null;
       document.addEventListener('keydown', teclado);
       document.body.style.overflow = 'hidden';
       await nextTick();
       panel.value?.querySelector<HTMLElement>('input, button:not([aria-label="Cerrar"]), [tabindex]')?.focus();
     } else {
-      document.removeEventListener('keydown', teclado);
-      document.body.style.overflow = '';
+      soltar();
       focoPrevio?.focus();
     }
   },
   { immediate: true },
 );
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', teclado);
-  document.body.style.overflow = '';
-});
+onBeforeUnmount(soltar);
 
 const ancho = { md: 'max-w-lg', lg: 'max-w-2xl' };
 </script>
