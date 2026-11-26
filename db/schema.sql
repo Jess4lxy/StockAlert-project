@@ -11,6 +11,7 @@
 -- las vuelve a crear al final
 DROP TABLE IF EXISTS solicitudes_reposicion;
 DROP TABLE IF EXISTS sesiones;
+DROP TABLE IF EXISTS usuarios_empresas;
 DROP TABLE IF EXISTS alertas;
 DROP TABLE IF EXISTS movimientos;
 DROP TABLE IF EXISTS productos;

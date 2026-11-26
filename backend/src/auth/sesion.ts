@@ -12,12 +12,25 @@ import { HttpError } from '../errores.js';
 export const ROLES = ['plataforma', 'admin', 'almacen'] as const;
 export type Rol = (typeof ROLES)[number];
 
+export interface EmpresaDeUsuario {
+  id_empresa: number;
+  nombre: string;
+  rol: Exclude<Rol, 'plataforma'>;
+  /** La primera a la que perteneció: se abre al iniciar sesión */
+  principal: boolean;
+}
+
 export interface UsuarioSesion {
   id_usuario: number;
   nombre: string;
   correo: string;
   rol: Rol;
+  /** Empresa abierta en esta sesión; null en la administración de la plataforma */
   empresa: { id_empresa: number; nombre: string } | null;
+  /** Empresas a las que puede cambiar con POST /api/auth/empresa */
+  empresas: EmpresaDeUsuario[];
+  /** También puede administrar la plataforma */
+  plataforma: boolean;
 }
 
 declare global {
@@ -31,42 +44,58 @@ declare global {
   }
 }
 
-export function firmarToken(idUsuario: number, familia: string): string {
-  return jwt.sign({ fam: familia }, config.jwt.secreto, {
+export function firmarToken(idUsuario: number, familia: string, idEmpresa: number | null): string {
+  return jwt.sign({ fam: familia, ...(idEmpresa === null ? {} : { emp: idEmpresa }) }, config.jwt.secreto, {
     subject: String(idUsuario),
     expiresIn: config.jwt.expira,
     algorithm: 'HS256',
   });
 }
 
-// Usuario activo de una empresa activa (o de la plataforma), con los datos que ve el cliente.
-// Con familia, además exige que esa sesión siga abierta (cerrar sesión invalida el token
-// de acceso de inmediato, sin esperar a que expire).
-export async function cargarUsuario(idUsuario: number, familia: string | null = null): Promise<UsuarioSesion | null> {
-  const { rows } = await pool.query<{
-    id_usuario: number;
-    nombre: string;
-    correo: string;
-    rol: Rol;
-    id_empresa: number | null;
-    empresa: string | null;
-  }>(
-    `SELECT u.id_usuario, u.nombre, u.correo, u.rol, u.id_empresa, e.nombre AS empresa
+interface OpcionesCarga {
+  /** Exige que esa sesión siga abierta (cerrar sesión invalida el token de acceso de inmediato) */
+  familia?: string | null;
+  /** Empresa por abrir; null o sin valor: la de inicio (plataforma o su primera empresa) */
+  empresa?: number | null;
+  /** Si ya no pertenece a esa empresa, no se abre otra en su lugar */
+  estricta?: boolean;
+}
+
+// Usuario activo con las empresas activas a las que pertenece y la que tiene abierta. El rol
+// es el que tiene en esa empresa. Devuelve null si ya no puede entrar a ninguna.
+export async function cargarUsuario(idUsuario: number, opc: OpcionesCarga = {}): Promise<UsuarioSesion | null> {
+  const { rows } = await pool.query<{ id_usuario: number; nombre: string; correo: string; rol: Rol; empresas: EmpresaDeUsuario[] }>(
+    `SELECT u.id_usuario, u.nombre, u.correo, u.rol,
+            coalesce((
+              SELECT json_agg(json_build_object('id_empresa', e.id_empresa, 'nombre', e.nombre, 'rol', ue.rol,
+                                                'principal', e.id_empresa IS NOT DISTINCT FROM u.id_empresa) ORDER BY e.nombre, e.id_empresa)
+              FROM usuarios_empresas ue
+              JOIN empresas e ON e.id_empresa = ue.id_empresa AND e.estado
+              WHERE ue.id_usuario = u.id_usuario AND ue.estado), '[]') AS empresas
      FROM usuarios u
-     LEFT JOIN empresas e ON e.id_empresa = u.id_empresa
-     WHERE u.id_usuario = $1 AND u.estado AND (u.id_empresa IS NULL OR e.estado)
+     WHERE u.id_usuario = $1 AND u.estado
        AND ($2::uuid IS NULL OR EXISTS (
              SELECT 1 FROM sesiones s WHERE s.familia = $2::uuid AND s.fecha_revocacion IS NULL))`,
-    [idUsuario, familia],
+    [idUsuario, opc.familia ?? null],
   );
   const u = rows[0];
   if (!u) return null;
+  const plataforma = u.rol === 'plataforma';
+
+  let abierta = typeof opc.empresa === 'number' ? u.empresas.find((e) => e.id_empresa === opc.empresa) : undefined;
+  if (!abierta) {
+    if (opc.estricta && typeof opc.empresa === 'number') return null;
+    if (!plataforma) abierta = u.empresas.find((e) => e.principal) ?? u.empresas[0];
+    if (!abierta && !plataforma) return null;
+  }
   return {
     id_usuario: u.id_usuario,
     nombre: u.nombre,
     correo: u.correo,
-    rol: u.rol,
-    empresa: u.id_empresa === null ? null : { id_empresa: u.id_empresa, nombre: u.empresa! },
+    rol: abierta ? abierta.rol : 'plataforma',
+    empresa: abierta ? { id_empresa: abierta.id_empresa, nombre: abierta.nombre } : null,
+    empresas: u.empresas,
+    plataforma,
   };
 }
 
@@ -76,15 +105,17 @@ export const autenticar: RequestHandler = async (req, _res, next) => {
   if (tipo !== 'Bearer' || !token) throw new HttpError(401, 'Inicia sesión: falta el token (Authorization: Bearer <token>)');
   let id: number;
   let familia: string | null = null;
+  let empresa: number | null = null;
   try {
     const datos = jwt.verify(token, config.jwt.secreto, { algorithms: ['HS256'] });
     id = Number(typeof datos === 'object' ? datos.sub : NaN);
     if (typeof datos === 'object' && typeof datos.fam === 'string') familia = datos.fam;
+    if (typeof datos === 'object' && typeof datos.emp === 'number') empresa = datos.emp;
   } catch {
     // El cliente debe pedir un token nuevo con POST /api/auth/refresh
     throw new HttpError(401, 'El token de acceso expiró o no es válido. Renuévalo con /api/auth/refresh.');
   }
-  const usuario = Number.isInteger(id) ? await cargarUsuario(id, familia) : null;
+  const usuario = Number.isInteger(id) ? await cargarUsuario(id, { familia, empresa, estricta: true }) : null;
   if (!usuario) throw new HttpError(401, 'El usuario ya no tiene acceso. Inicia sesión de nuevo.');
   req.usuario = usuario;
   req.familia = familia;
@@ -107,7 +138,7 @@ export const permitir =
 export function empresaDe(req: Request): number {
   const empresa = sesion(req).empresa;
   if (!empresa) {
-    throw new HttpError(403, 'Los administradores de la plataforma no tienen inventario: inicia sesión con un usuario de la empresa');
+    throw new HttpError(403, 'La administración de la plataforma no tiene inventario: cambia a una empresa');
   }
   return empresa.id_empresa;
 }

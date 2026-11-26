@@ -77,7 +77,7 @@ onMounted(async () => {
 
 function avisar(mensaje: string) {
   exito.value = mensaje;
-  setTimeout(() => (exito.value = ''), 4000);
+  setTimeout(() => (exito.value = ''), 8000);
 }
 
 const ETIQUETA_ROL: Record<Rol, string> = { plataforma: 'Plataforma', admin: 'Administrador', almacen: 'Almacén' };
@@ -108,7 +108,11 @@ const form = reactive({ nombre: '', correo: '', contrasena: '', rol: 'almacen' a
 const errores = reactive({ nombre: '', correo: '', contrasena: '', id_empresa: '' });
 const guardando = ref(false);
 const errorDialogo = ref('');
-const esYo = computed(() => editando.value?.id_usuario === yo.value?.id_usuario);
+// Su fila en la empresa (o plataforma) que tiene abierta
+const esMiFila = (u: Usuario) => u.id_usuario === yo.value?.id_usuario && u.id_empresa === (yo.value?.empresa?.id_empresa ?? null);
+const esYo = computed(() => !!editando.value && esMiFila(editando.value));
+// El admin de una empresa no cambia los datos de una cuenta que también se usa en otra
+const soloEmpresa = computed(() => !!editando.value?.cuenta_compartida && !esPlataforma.value && editando.value.id_usuario !== yo.value?.id_usuario);
 
 // Tras el primer intento de guardar, los mensajes se actualizan mientras se escribe
 let intentado = false;
@@ -137,7 +141,8 @@ function abrirEditar(u: Usuario) {
 function validar(): boolean {
   errores.nombre = form.nombre.trim().length < 2 ? 'Escribe el nombre (mínimo 2 caracteres)' : '';
   errores.correo = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.correo.trim()) ? '' : 'Escribe un correo válido';
-  const requiereContrasena = !editando.value;
+  // Al agregar puede ir vacía si el correo ya tiene cuenta: la API lo revisa
+  const requiereContrasena = !editando.value && form.rol === 'plataforma';
   errores.contrasena =
     (requiereContrasena || form.contrasena) && form.contrasena.length < 8 ? 'Usa al menos 8 caracteres' : '';
   errores.id_empresa =
@@ -159,17 +164,24 @@ async function guardar() {
       if (form.rol !== u.rol) cambios.rol = form.rol;
       if ((form.activo === 'si') !== u.estado) cambios.estado = form.activo === 'si';
       if (form.contrasena) cambios.contrasena = form.contrasena;
-      if (Object.keys(cambios).length) await api.editarUsuario(u.id_usuario, cambios);
+      if (Object.keys(cambios).length) {
+        if (esPlataforma.value && u.id_empresa) cambios.id_empresa = u.id_empresa;
+        await api.editarUsuario(u.id_usuario, cambios);
+      }
       avisar(`Usuario ${form.nombre.trim()} actualizado.`);
     } else {
-      await api.crearUsuario({
+      const creado = await api.crearUsuario({
         nombre: form.nombre.trim(),
         correo: form.correo.trim(),
-        contrasena: form.contrasena,
+        ...(form.contrasena ? { contrasena: form.contrasena } : {}),
         rol: form.rol,
         ...(esPlataforma.value && form.rol !== 'plataforma' ? { id_empresa: form.id_empresa as number } : {}),
       });
-      avisar(`Usuario ${form.nombre.trim()} creado. Comparte con él su correo y contraseña inicial.`);
+      avisar(
+        creado.cuenta_existente
+          ? `${creado.nombre} ya tenía cuenta: se agregó a ${creado.empresa}. Entra con su contraseña de siempre y cambia de empresa desde la barra superior.`
+          : `Usuario ${creado.nombre} creado. Comparte con él su correo y contraseña inicial.`,
+      );
     }
     dialogoAbierto.value = false;
     cargar();
@@ -179,6 +191,9 @@ async function guardar() {
     guardando.value = false;
   }
 }
+
+// Una persona puede salir varias veces: una fila por empresa
+const filas = computed(() => (resultado.value?.data ?? []).map((u) => ({ ...u, fila: `${u.id_usuario}-${u.id_empresa ?? 0}` })));
 
 const columnas = computed<Columna[]>(() => [
   { key: 'nombre', label: 'Usuario' },
@@ -221,10 +236,10 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
     <p v-if="exito" class="mb-3 rounded-lg bg-exito-10 p-3 text-sm text-exito" role="status">{{ exito }}</p>
     <p v-if="error" class="mb-3 rounded-lg bg-error-10 p-3 text-sm text-error">{{ error }}</p>
 
-    <DataTable :columns="columnas" :rows="resultado?.data ?? []" row-key="id_usuario" :loading="cargando" empty-text="No hay usuarios con esos filtros.">
+    <DataTable :columns="columnas" :rows="filas" row-key="fila" :loading="cargando" empty-text="No hay usuarios con esos filtros.">
       <template #cell-nombre="{ row }">
         <div class="flex flex-col">
-          <span class="font-medium text-marino">{{ row.nombre }}<span v-if="row.id_usuario === yo?.id_usuario" class="text-texto-suave"> (tú)</span></span>
+          <span class="font-medium text-marino">{{ row.nombre }}<span v-if="esMiFila(row)" class="text-texto-suave"> (tú)</span></span>
           <span class="text-xs text-texto-suave">{{ row.correo }}</span>
         </div>
       </template>
@@ -248,14 +263,17 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
     <BaseDialog
       v-model:open="dialogoAbierto"
       :title="editando ? 'Editar usuario' : 'Nuevo usuario'"
-      :subtitle="editando ? editando.correo : 'La persona entrará con este correo y la contraseña inicial.'"
+      :subtitle="editando ? editando.correo : 'Si su correo ya tiene cuenta, se agrega a la empresa con su contraseña de siempre.'"
       width="lg"
     >
       <form id="form-usuario" novalidate class="grid grid-cols-1 gap-4 md:grid-cols-2" @submit.prevent="guardar">
-        <FormField id="usuario-nombre" label="Nombre completo" :error="errores.nombre">
+        <p v-if="soloEmpresa" class="rounded-lg bg-marino-10 p-3 text-sm text-texto md:col-span-2">
+          {{ editando?.nombre }} también usa su cuenta en otro lugar: aquí puedes cambiar su rol y su acceso a esta empresa.
+        </p>
+        <FormField v-if="!soloEmpresa" id="usuario-nombre" label="Nombre completo" :error="errores.nombre">
           <TextInput id="usuario-nombre" v-model="form.nombre" placeholder="Ej. Ana Pérez" :maxlength="100" :invalid="!!errores.nombre" />
         </FormField>
-        <FormField id="usuario-correo" label="Correo" :error="errores.correo">
+        <FormField v-if="!soloEmpresa" id="usuario-correo" label="Correo" :error="errores.correo">
           <TextInput id="usuario-correo" v-model="form.correo" type="email" placeholder="nombre@negocio.com" autocomplete="off" :maxlength="150" :invalid="!!errores.correo" />
         </FormField>
         <FormField id="usuario-rol" label="Rol">
@@ -268,6 +286,7 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
           <SelectInput id="usuario-empresa" v-model="form.id_empresa" :options="empresas" placeholder="Elige una empresa" />
         </FormField>
         <FormField
+          v-if="!soloEmpresa"
           id="usuario-contrasena"
           :label="editando ? 'Nueva contraseña (opcional)' : 'Contraseña inicial'"
           :error="errores.contrasena"
@@ -276,7 +295,7 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
             id="usuario-contrasena"
             v-model="form.contrasena"
             type="password"
-            :placeholder="editando ? 'Déjala vacía para no cambiarla' : 'Mínimo 8 caracteres'"
+            :placeholder="editando ? 'Déjala vacía para no cambiarla' : 'Solo si es una cuenta nueva (mínimo 8)'"
             autocomplete="new-password"
             :maxlength="128"
             :invalid="!!errores.contrasena"
@@ -288,8 +307,8 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
             id="usuario-estado"
             v-model="form.activo"
             :options="[
-              { value: 'si', label: 'Activo: puede iniciar sesión' },
-              { value: 'no', label: 'Inactivo: no puede entrar' },
+              { value: 'si', label: 'Activo: puede entrar a la empresa' },
+              { value: 'no', label: 'Inactivo: ya no entra a la empresa' },
             ]"
           />
           <p v-else class="flex h-[43px] items-center text-sm text-texto-suave">Activo · no puedes desactivar tu propia cuenta</p>

@@ -2,7 +2,9 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import PwaAvisos from '@/components/PwaAvisos.vue';
 import ColaDialog from '@/components/inventario/ColaDialog.vue';
-import { AppIcon, AppShell, BaseButton, BaseDialog, type ItemNavegacion } from '@/components/ui';
+import { mensajeDeError } from '@/api';
+import { AppIcon, AppShell, BaseButton, BaseDialog, type ItemNavegacion, type Opcion } from '@/components/ui';
+import { claveInventario } from '@/datos/bd';
 import { alGenerarAlerta, sincronizar, usarInventarioDe, useInventario } from '@/datos/inventario';
 import { notificarAlerta, revisarAlertas } from '@/dispositivo/notificaciones';
 import { guardarDatosSinConexion } from '@/pwa/usePwa';
@@ -18,10 +20,12 @@ import UsuariosView from '@/views/UsuariosView.vue';
 // Las gráficas (Chart.js) van en su propio archivo: el inicio de sesión no las descarga
 const DashboardView = defineAsyncComponent(() => import('@/views/DashboardView.vue'));
 
-const { usuario, token, cerrarSesion, revisarSesion } = useSesion();
+const { usuario, token, cambiarEmpresa, cerrarSesion, revisarSesion } = useSesion();
+const inventario = computed(() => claveInventario(usuario.value));
 const { cola, pendientes, rechazadas, sincronizando } = useInventario();
 const verCola = ref(false);
 const confirmarSalida = ref(false);
+const errorEmpresa = ref('');
 
 const INVENTARIO: ItemNavegacion[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'space_dashboard' },
@@ -81,36 +85,37 @@ function ir(destino: string) {
   window.scrollTo({ top: 0 });
 }
 
-// Cuando la sesión obtiene su token (al entrar, al cambiar de cuenta o al abrir la app)
+// Cuando la sesión obtiene su token (al entrar, al cambiar de empresa o al abrir la app)
 // se guarda la vista inicial de cada sección para usarla sin conexión. No se repite en
 // cada renovación del token. La plataforma no tiene inventario que guardar.
 watch(
-  [() => usuario.value?.id_usuario, () => !!token.value] as const,
-  ([id, conToken]) => {
-    if (id && conToken && usuario.value?.empresa) guardarDatosSinConexion();
+  [inventario, () => !!token.value] as const,
+  ([clave, conToken]) => {
+    if (clave && conToken) guardarDatosSinConexion();
   },
   { immediate: true },
 );
 
-// El inventario del dispositivo es del usuario con sesión. Se abre aunque no haya token
-// (sin conexión) y se sincroniza en cuanto lo hay.
+// El inventario del dispositivo es del usuario con sesión en la empresa abierta. Se abre aunque
+// no haya token (sin conexión) y se sincroniza en cuanto lo hay. flush: 'sync' para que cambie
+// de base en el mismo momento que la sesión, sin dejar un hueco en el que se mezclen empresas.
 watch(
-  [() => (usuario.value?.empresa ? usuario.value.id_usuario : null), () => !!token.value] as const,
-  async ([id, conToken]) => {
-    await usarInventarioDe(id);
-    if (!id || !conToken) return;
+  [inventario, () => !!token.value] as const,
+  async ([clave, conToken]) => {
+    await usarInventarioDe(clave);
+    if (!clave || !conToken || inventario.value !== clave) return;
     await sincronizar();
-    void revisarAlertas(id).catch(() => {});
+    void revisarAlertas(clave).catch(() => {});
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 );
 alGenerarAlerta((alerta, nombre) => {
-  if (usuario.value) void notificarAlerta(usuario.value.id_usuario, alerta, nombre);
+  if (inventario.value) void notificarAlerta(inventario.value, alerta, nombre);
 });
 
 // Alertas que generó otra persona: cada 5 minutos y al volver a la app
 const buscarAlertas = () => {
-  if (usuario.value?.empresa && token.value) void revisarAlertas(usuario.value.id_usuario).catch(() => {});
+  if (inventario.value && token.value) void revisarAlertas(inventario.value).catch(() => {});
 };
 const alVolver = () => document.visibilityState === 'visible' && buscarAlertas();
 const reloj = setInterval(buscarAlertas, 5 * 60_000);
@@ -119,6 +124,41 @@ onBeforeUnmount(() => {
   clearInterval(reloj);
   document.removeEventListener('visibilitychange', alVolver);
 });
+
+// --- Cambio de empresa ----------------------------------------------------------
+// El selector aparece si hay a dónde cambiar. 0 = administración de la plataforma.
+const empresas = computed<Opcion<number>[]>(() => {
+  const lista = (usuario.value?.empresas ?? []).map((e) => ({ value: e.id_empresa, label: e.nombre }));
+  return usuario.value?.plataforma ? [{ value: 0, label: 'Administración de la plataforma' }, ...lista] : lista;
+});
+const empresaAbierta = computed(() => usuario.value?.empresa?.id_empresa ?? 0);
+const cambiando = ref(false);
+const porCambiar = ref<number | null>(null);
+
+async function elegirEmpresa(id: number) {
+  if (id === empresaAbierta.value || cambiando.value) return;
+  errorEmpresa.value = '';
+  if (!navigator.onLine) {
+    errorEmpresa.value = 'Para cambiar de empresa necesitas conexión a Internet.';
+    return;
+  }
+  if (pendientes.value.length) await sincronizar();
+  if (cola.value.length) porCambiar.value = id;
+  else await abrirEmpresa(id);
+}
+
+async function abrirEmpresa(id: number) {
+  porCambiar.value = null;
+  cambiando.value = true;
+  try {
+    await cambiarEmpresa(id || null);
+    ir(secciones.value[0]?.id ?? '');
+  } catch (e) {
+    errorEmpresa.value = mensajeDeError(e);
+  } finally {
+    cambiando.value = false;
+  }
+}
 
 // Con operaciones por enviar se avisa antes de cerrar sesión
 async function pedirSalida() {
@@ -140,7 +180,18 @@ async function salir() {
     <LoginView v-else />
   </template>
 
-  <AppShell v-else :active="activa" :items="secciones" :usuario="datosUsuario" @update:active="ir" @salir="pedirSalida">
+  <AppShell
+    v-else
+    :active="activa"
+    :items="secciones"
+    :usuario="datosUsuario"
+    :empresas="empresas"
+    :empresa="empresaAbierta"
+    :cambiando="cambiando"
+    @update:active="ir"
+    @empresa="elegirEmpresa"
+    @salir="pedirSalida"
+  >
     <template #estado>
       <button
         v-if="cola.length"
@@ -153,8 +204,12 @@ async function salir() {
         {{ rechazadas.length ? `${rechazadas.length} por revisar` : `${pendientes.length} por enviar` }}
       </button>
     </template>
-    <!-- :key reinicia la pantalla al cambiar de cuenta, para no mostrar datos de la anterior -->
-    <div :key="usuario.id_usuario">
+    <p v-if="errorEmpresa" class="mb-3 flex items-center justify-between gap-3 rounded-lg bg-error-10 p-3 text-sm text-error" role="alert">
+      {{ errorEmpresa }}
+      <button type="button" class="font-semibold" @click="errorEmpresa = ''">Cerrar</button>
+    </p>
+    <!-- :key reinicia la pantalla al cambiar de cuenta o de empresa, para no mostrar datos de la anterior -->
+    <div :key="`${usuario.id_usuario}-${empresaAbierta}`">
       <EmpresasView v-if="activa === 'empresas'" @ver-usuarios="(id) => ir(`usuarios?empresa=${id}`)" />
       <UsuariosView v-else-if="activa === 'usuarios'" :empresa-inicial="empresaFiltro" />
       <DashboardView v-else-if="activa === 'dashboard'" />
@@ -172,6 +227,15 @@ async function salir() {
     <template #acciones>
       <BaseButton variant="outline" @click="confirmarSalida = false">Quedarme</BaseButton>
       <BaseButton @click="salir">Cerrar sesión</BaseButton>
+    </template>
+  </BaseDialog>
+  <BaseDialog :open="porCambiar !== null" title="Tienes cambios sin enviar" @update:open="(abierto) => !abierto && (porCambiar = null)">
+    <p class="text-sm text-texto">
+      {{ cola.length === 1 ? 'Queda 1 operación' : `Quedan ${cola.length} operaciones` }} de {{ usuario?.empresa?.nombre }} en este dispositivo. Se conservan y se enviarán cuando vuelvas a esta empresa.
+    </p>
+    <template #acciones>
+      <BaseButton variant="outline" @click="porCambiar = null">Quedarme</BaseButton>
+      <BaseButton @click="porCambiar !== null && abrirEmpresa(porCambiar)">Cambiar de empresa</BaseButton>
     </template>
   </BaseDialog>
   <PwaAvisos />

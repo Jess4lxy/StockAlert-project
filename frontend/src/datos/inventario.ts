@@ -27,7 +27,8 @@ export interface Resultado {
 
 type Nueva = Omit<Operacion, 'id' | 'clave' | 'fecha' | 'estado'>;
 
-const usuario = ref<number | null>(null);
+// Base de IndexedDB en uso: la del usuario en la empresa abierta (claveInventario)
+const usuario = ref<string | null>(null);
 // shallowRef: IndexedDB no puede guardar los proxies que crea ref()
 const cola = shallowRef<Operacion[]>([]);
 const sincronizando = ref(false);
@@ -45,15 +46,15 @@ async function refrescarCola() {
   version.value++;
 }
 
-/** Se llama al cambiar de sesión. Solo aplica a usuarios con empresa (con inventario). */
-export async function usarInventarioDe(idUsuario: number | null) {
-  usuario.value = idUsuario;
+/** Se llama al cambiar de sesión o de empresa. null: sin inventario (plataforma o sin sesión). */
+export async function usarInventarioDe(clave: string | null) {
+  usuario.value = clave;
   await refrescarCola().catch(() => (cola.value = []));
 }
 
 // --- Envío ----------------------------------------------------------------------
 
-async function enviar(u: number, op: Operacion): Promise<Alerta | null> {
+async function enviar(u: string, op: Operacion): Promise<Alerta | null> {
   const id = op.producto.id ?? 0;
   switch (op.tipo) {
     case 'crear_producto': {
@@ -89,7 +90,8 @@ export async function ejecutar(nueva: Nueva): Promise<Resultado & { operacion: O
   // Con operaciones anteriores por enviar se respeta el orden: primero ellas
   if (navigator.onLine && pendientes.value.length) await sincronizar();
   const dependeDeAlta = !op.producto.id && op.tipo !== 'crear_producto';
-  if (navigator.onLine && !pendientes.value.length && !dependeDeAlta) {
+  // Si entre tanto se cambió de empresa, queda en la cola de la empresa donde se registró
+  if (navigator.onLine && usuario.value === u && !pendientes.value.length && !dependeDeAlta) {
     try {
       const alerta = await enviar(u, op);
       void descargar().catch(() => {});
@@ -107,7 +109,7 @@ const alertasNuevas: ((alerta: Alerta, nombre: string) => void)[] = [];
 /** Avisa de cada alerta que se genere al sincronizar (para la notificación) */
 export const alGenerarAlerta = (f: (alerta: Alerta, nombre: string) => void) => void alertasNuevas.push(f);
 
-async function enviarCola(u: number) {
+async function enviarCola(u: string) {
   for (;;) {
     const op = (await bd.cola(u)).find((o) => o.estado === 'pendiente');
     if (!op || usuario.value !== u) return;
@@ -135,6 +137,7 @@ async function descargar() {
   const lista: Producto[] = [];
   for (let page = 1; ; page++) {
     const r = await api.productos({ q: '', estado: '', categoria: '', activo: 'todos', page, limit: 100 });
+    if (usuario.value !== u) return;
     lista.push(...r.data);
     if (page >= r.totalPages) break;
   }
@@ -143,12 +146,17 @@ async function descargar() {
   version.value++;
 }
 
-let enCurso: Promise<void> | null = null;
+let enCurso: { clave: string; fin: Promise<void> } | null = null;
 /** Envía la cola y actualiza la copia local. Varias llamadas a la vez comparten una sola. */
 export function sincronizar(): Promise<void> {
   const u = usuario.value;
   if (!u || !navigator.onLine) return Promise.resolve();
-  enCurso ??= (async () => {
+  if (enCurso?.clave === u) return enCurso.fin;
+  // Al cambiar de empresa se espera a que termine la sincronización de la anterior
+  const anterior = enCurso?.fin;
+  const fin = (async () => {
+    await anterior;
+    if (usuario.value !== u) return;
     sincronizando.value = true;
     try {
       // Con dos pestañas abiertas solo una envía la cola
@@ -161,10 +169,12 @@ export function sincronizar(): Promise<void> {
       await refrescarCola().catch(() => {});
     } finally {
       sincronizando.value = false;
-      enCurso = null;
     }
-  })();
-  return enCurso;
+  })().finally(() => {
+    if (enCurso?.fin === fin) enCurso = null;
+  });
+  enCurso = { clave: u, fin };
+  return fin;
 }
 
 /** Reintenta una operación rechazada (después de corregir la causa, p. ej. reponer stock) */

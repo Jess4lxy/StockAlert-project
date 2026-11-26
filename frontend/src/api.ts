@@ -84,12 +84,25 @@ export interface FiltrosAlertas {
   limit: number;
 }
 
+export interface EmpresaDeUsuario {
+  id_empresa: number;
+  nombre: string;
+  rol: Rol;
+  /** La primera a la que perteneció: se abre al iniciar sesión */
+  principal: boolean;
+}
+
 export interface UsuarioSesion {
   id_usuario: number;
   nombre: string;
   correo: string;
+  /** Rol en la empresa abierta */
   rol: Rol;
   empresa: { id_empresa: number; nombre: string } | null;
+  /** Empresas a las que puede cambiar. Falta en sesiones guardadas por versiones anteriores */
+  empresas?: EmpresaDeUsuario[];
+  /** También puede administrar la plataforma */
+  plataforma?: boolean;
 }
 
 // Respuesta de login, registro y refresh. El refresh token de la web viaja en una
@@ -118,6 +131,8 @@ export interface Usuario {
   fecha_registro: string;
   id_empresa: number | null;
   empresa: string | null;
+  /** También está en otras empresas o en la plataforma */
+  cuenta_compartida: boolean;
 }
 
 export interface FiltrosEmpresas {
@@ -151,10 +166,13 @@ export class ErrorApi extends Error {
 // Sesión: sesion.ts guarda aquí el token de acceso (solo en memoria, dura 15 min) y qué
 // hacer con un token renovado o con una sesión que ya no se puede renovar
 let token: string | null = null;
+// Empresa abierta en esta pestaña (null: plataforma; undefined: sin sesión)
+let empresa: number | null | undefined;
 let alRenovar: ((sesion: Sesion) => void) | null = null;
 let alRechazarSesion: (() => void) | null = null;
-export function configurarSesion(nuevo: string | null, eventos?: { alRenovar: (s: Sesion) => void; alRechazar: () => void }) {
+export function configurarSesion(nuevo: string | null, empresaAbierta: number | null | undefined, eventos?: { alRenovar: (s: Sesion) => void; alRechazar: () => void }) {
   token = nuevo;
+  empresa = empresaAbierta;
   if (eventos) {
     alRenovar = eventos.alRenovar;
     alRechazarSesion = eventos.alRechazar;
@@ -167,23 +185,20 @@ let refrescando: Promise<Sesion | null> | null = null;
 export function refrescarSesion(): Promise<Sesion | null> {
   refrescando ??= (async () => {
     try {
-      for (let intento = 0; intento < 2; intento++) {
-        const res = await fetch(construirUrl('/auth/refresh'), { method: 'POST', credentials: 'include' });
-        // 409: otra pestaña acaba de renovar la sesión; la cookie ya trae el token nuevo
-        if (res.status === 409 && intento === 0) {
-          await new Promise((r) => setTimeout(r, 500));
-          continue;
-        }
-        if (!res.ok) {
-          if (res.status === 401 || res.status === 403) alRechazarSesion?.();
-          return null;
-        }
-        const sesion = (await res.json()) as Sesion;
-        token = sesion.token;
-        alRenovar?.(sesion);
-        return sesion;
+      // La empresa es la de esta pestaña: otra puede tener abierta una distinta con la misma cookie
+      const res = await fetch(construirUrl('/auth/refresh'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(empresa === undefined ? {} : { id_empresa: empresa }),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) alRechazarSesion?.();
+        return null;
       }
-      return null;
+      const sesion = (await res.json()) as Sesion;
+      alRenovar?.(sesion);
+      return sesion;
     } finally {
       refrescando = null;
     }
@@ -208,6 +223,7 @@ async function pedir<T>(
 ): Promise<T> {
   const imagen = opciones.body instanceof Blob ? opciones.body : null;
   const deSesion = ruta.startsWith('/auth/');
+  const empresaAlPedir = empresa;
   const res = await fetch(construirUrl(ruta, opciones.params), {
     method: metodo,
     signal: opciones.signal,
@@ -220,7 +236,10 @@ async function pedir<T>(
     body: imagen ?? (opciones.body !== undefined ? JSON.stringify(opciones.body) : undefined),
   });
   // Token de acceso vencido (o aún no pedido al abrir la app): se renueva una vez y se reintenta
-  if (res.status === 401 && !deSesion && !reintento && (await refrescarSesion())) {
+  // (cambiar de empresa también lleva token, aunque sea ruta de sesión)
+  if (res.status === 401 && (!deSesion || ruta === '/auth/empresa') && !reintento && (await refrescarSesion())) {
+    // Si mientras tanto se abrió otra empresa, la petición no debe aplicarse en ella
+    if (empresa !== empresaAlPedir) throw new ErrorApi(401, 'Cambiaste de empresa antes de que terminara la operación');
     return pedir<T>(metodo, ruta, opciones, true);
   }
   if (!res.ok) {
@@ -263,13 +282,16 @@ export const api = {
   registro: (datos: { empresa: string; nombre: string; correo: string; contrasena: string }) =>
     pedir<Sesion>('POST', '/auth/registro', { body: datos }),
   yo: () => get<UsuarioSesion>('/auth/yo'),
+  // null: administración de la plataforma
+  cambiarEmpresa: (id_empresa: number | null) => pedir<Sesion>('POST', '/auth/empresa', { body: { id_empresa } }),
   logout: () => pedir<void>('POST', '/auth/logout'),
 
-  // Inventario de la empresa
+  // Inventario de la empresa. El parámetro empresa no lo usa la API (la toma del token): separa
+  // en la caché del Service Worker las respuestas de cada empresa.
   movimientos: (filtros: FiltrosMovimientos, signal?: AbortSignal) =>
-    get<Pagina<Movimiento>>('/movimientos', { ...filtros }, signal),
-  categorias: () => get<string[]>('/categorias'),
-  dashboard: (meses: number, signal?: AbortSignal) => get<Dashboard>('/dashboard', { meses }, signal),
+    get<Pagina<Movimiento>>('/movimientos', { ...filtros, empresa: empresa ?? '' }, signal),
+  categorias: () => get<string[]>('/categorias', { empresa: empresa ?? '' }),
+  dashboard: (meses: number, signal?: AbortSignal) => get<Dashboard>('/dashboard', { meses, empresa: empresa ?? '' }, signal),
   productos: (filtros: FiltrosProductos, signal?: AbortSignal) =>
     get<Pagina<Producto>>('/productos', { ...filtros }, signal),
   crearProducto: (datos: DatosProducto & { clave_cliente: string }) => pedir<ProductoGuardado>('POST', '/productos', escritura(datos)),
@@ -281,18 +303,18 @@ export const api = {
   registrarMovimiento: (datos: DatosMovimiento & { id_producto: number; clave_cliente: string; fecha_movimiento: string }) =>
     pedir<{ alerta_generada: Alerta | null }>('POST', '/movimientos', escritura(datos)),
   cambiarAlerta: (id: number, estado: EstadoAlerta) => pedir<Alerta>('PATCH', `/alertas/${id}`, escritura({ estado })),
-  alertas: (filtros: FiltrosAlertas, signal?: AbortSignal) => get<Pagina<Alerta>>('/alertas', { ...filtros }, signal),
-  resumenAlertas: () => get<{ pendientes: number; total: number }>('/alertas/resumen'),
+  alertas: (filtros: FiltrosAlertas, signal?: AbortSignal) => get<Pagina<Alerta>>('/alertas', { ...filtros, empresa: empresa ?? '' }, signal),
+  resumenAlertas: () => get<{ pendientes: number; total: number }>('/alertas/resumen', { empresa: empresa ?? '' }),
 
   // Administración
   empresas: (filtros: FiltrosEmpresas, signal?: AbortSignal) => get<Pagina<Empresa>>('/empresas', { ...filtros }, signal),
-  crearEmpresa: (datos: { nombre: string; admin?: { nombre: string; correo: string; contrasena: string } }) =>
+  crearEmpresa: (datos: { nombre: string; admin?: { nombre: string; correo: string; contrasena?: string } }) =>
     pedir<Empresa>('POST', '/empresas', { body: datos }),
   editarEmpresa: (id: number, datos: { nombre?: string; estado?: boolean }) => pedir<Empresa>('PATCH', `/empresas/${id}`, { body: datos }),
   usuarios: (filtros: FiltrosUsuarios, signal?: AbortSignal) => get<Pagina<Usuario>>('/usuarios', { ...filtros }, signal),
-  crearUsuario: (datos: { nombre: string; correo: string; contrasena: string; rol: Rol; id_empresa?: number }) =>
-    pedir<Usuario>('POST', '/usuarios', { body: datos }),
-  editarUsuario: (id: number, datos: { nombre?: string; correo?: string; rol?: Rol; estado?: boolean; contrasena?: string }) =>
+  crearUsuario: (datos: { nombre: string; correo: string; contrasena?: string; rol: Rol; id_empresa?: number }) =>
+    pedir<Usuario & { cuenta_existente: boolean }>('POST', '/usuarios', { body: datos }),
+  editarUsuario: (id: number, datos: { nombre?: string; correo?: string; rol?: Rol; estado?: boolean; contrasena?: string; id_empresa?: number }) =>
     pedir<Usuario>('PATCH', `/usuarios/${id}`, { body: datos }),
 };
 
@@ -301,13 +323,13 @@ export const api = {
 // van aquí: se guardan completos en IndexedDB, ver datos/inventario.ts).
 // Los parámetros van en el mismo orden que los filtros de cada vista: la caché compara la URL exacta.
 export const urlsEsenciales = (): string[] => [
-  construirUrl('/dashboard', { meses: 3 }),
-  construirUrl('/dashboard', { meses: 6 }),
-  construirUrl('/dashboard', { meses: 12 }),
-  construirUrl('/movimientos', { page: 1, limit: 20 }),
-  construirUrl('/alertas', { page: 1, limit: 20 }),
-  construirUrl('/alertas/resumen'),
-  construirUrl('/categorias'),
+  construirUrl('/dashboard', { meses: 3, empresa: empresa ?? '' }),
+  construirUrl('/dashboard', { meses: 6, empresa: empresa ?? '' }),
+  construirUrl('/dashboard', { meses: 12, empresa: empresa ?? '' }),
+  construirUrl('/movimientos', { page: 1, limit: 20, empresa: empresa ?? '' }),
+  construirUrl('/alertas', { page: 1, limit: 20, empresa: empresa ?? '' }),
+  construirUrl('/alertas/resumen', { empresa: empresa ?? '' }),
+  construirUrl('/categorias', { empresa: empresa ?? '' }),
 ];
 
 // Mensaje para el usuario: el de la API si rechazó la petición (400, 403, 409…);

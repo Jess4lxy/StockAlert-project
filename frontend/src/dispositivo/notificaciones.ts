@@ -36,14 +36,14 @@ const textoDe = (a: { producto?: string; tipo_alerta: string; stock_detectado: n
   a.tipo_alerta === 'agotado' ? `${a.producto} se agotó` : `${a.producto} está bajo su mínimo (quedan ${a.stock_detectado})`;
 
 /** Alerta generada por una operación de este dispositivo */
-export async function notificarAlerta(usuario: number, alerta: Alerta, nombre: string) {
+export async function notificarAlerta(usuario: string, alerta: Alerta, nombre: string) {
   const ultima = Number(await bd.meta(usuario, 'ultima-alerta')) || 0;
   if (alerta.id_alerta > ultima) await bd.guardarMeta(usuario, 'ultima-alerta', String(alerta.id_alerta));
   await mostrar('Alerta de stock', textoDe({ ...alerta, producto: nombre }), `alerta-${alerta.id_alerta}`);
 }
 
 /** Revisa si hay alertas que este dispositivo no ha visto (p. ej., de una venta en otro) */
-export async function revisarAlertas(usuario: number) {
+export async function revisarAlertas(usuario: string) {
   if (!navigator.onLine) return;
   const { data } = await api.alertas({ estado: 'pendiente', tipo: '', page: 1, limit: 20 });
   const anterior = await bd.meta(usuario, 'ultima-alerta');

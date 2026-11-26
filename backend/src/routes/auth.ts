@@ -7,12 +7,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { hashContrasena, hashSenuelo, verificarContrasena } from '../auth/contrasena.js';
-import { DIAS_REFRESH, crearSesion, revocarPorToken, revocarSesionesDeUsuario, rotarSesion, type Cliente } from '../auth/refresh.js';
+import { DIAS_REFRESH, crearSesion, guardarEmpresaDeSesion, revocarPorToken, revocarSesionesDeUsuario, rotarSesion, type Cliente } from '../auth/refresh.js';
 import { autenticar, cargarUsuario, firmarToken, sesion } from '../auth/sesion.js';
 import { config } from '../config.js';
 import { pool } from '../db.js';
 import { HttpError } from '../errores.js';
-import { claveEscrita, contrasena, correo, cuerpo, opcion, texto } from '../validar.js';
+import { claveEscrita, contrasena, correo, cuerpo, entero, opcion, texto } from '../validar.js';
 
 export const auth = Router();
 
@@ -43,11 +43,11 @@ function refreshDe(req: Request): string | null {
 }
 
 // Respuesta común de login, registro y refresh
-async function responderSesion(res: Response, idUsuario: number, sesionNueva: { token: string; familia: string; cliente: Cliente }, status = 200) {
-  const usuario = await cargarUsuario(idUsuario);
+async function responderSesion(res: Response, idUsuario: number, sesionNueva: { token: string; familia: string; cliente: Cliente }, opc: { status?: number; empresa?: number | null } = {}) {
+  const usuario = await cargarUsuario(idUsuario, { empresa: opc.empresa });
   if (!usuario) throw new HttpError(403, 'La cuenta o su empresa están desactivadas');
   const respuesta: Record<string, unknown> = {
-    token: firmarToken(idUsuario, sesionNueva.familia),
+    token: firmarToken(idUsuario, sesionNueva.familia, usuario.empresa?.id_empresa ?? null),
     expira_en: config.jwt.expiraSegundos,
     usuario,
   };
@@ -57,7 +57,7 @@ async function responderSesion(res: Response, idUsuario: number, sesionNueva: { 
   } else {
     res.cookie(COOKIE, sesionNueva.token, { ...opcionesCookie, maxAge: DIAS_REFRESH * 24 * 60 * 60 * 1000 });
   }
-  res.status(status).json(respuesta);
+  res.status(opc.status ?? 200).json(respuesta);
 }
 
 // POST /api/auth/login - { correo, contrasena, cliente? } → { token, expira_en, usuario, refresh_token? }
@@ -101,8 +101,9 @@ auth.post('/registro', async (req, res) => {
        VALUES ($1, $2, $3, $4, 'admin') RETURNING id_usuario`,
       [e.rows[0].id_empresa, nombre, email, hash],
     );
-    await client.query('COMMIT');
     idUsuario = u.rows[0].id_usuario;
+    await client.query(`INSERT INTO usuarios_empresas (id_usuario, id_empresa, rol) VALUES ($1, $2, 'admin')`, [idUsuario, e.rows[0].id_empresa]);
+    await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     if ((error as { code?: string }).code === '23505') throw new HttpError(409, 'Ya existe una cuenta con ese correo');
@@ -111,14 +112,18 @@ auth.post('/registro', async (req, res) => {
     client.release();
   }
   const nueva = await crearSesion(idUsuario, cliente);
-  await responderSesion(res, idUsuario, { ...nueva, cliente }, 201);
+  await responderSesion(res, idUsuario, { ...nueva, cliente }, { status: 201 });
 });
 
 // POST /api/auth/refresh - cambia el refresh token (cookie o { refresh_token }) por un
-// token de acceso nuevo y un refresh token nuevo (rotación)
+// token de acceso nuevo y un refresh token nuevo (rotación). La sesión sigue en la empresa
+// que tenía abierta; con id_empresa (null: plataforma) el cliente indica la suya, porque
+// dos pestañas pueden tener empresas distintas. Si ya no pertenece a ella, abre otra.
 auth.post('/refresh', async (req, res) => {
   const token = refreshDe(req);
   if (!token) throw new HttpError(401, 'Falta el refresh token. Inicia sesión de nuevo.');
+  const b = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+  const pedida = b.id_empresa === null ? null : entero(b, 'id_empresa', { min: 1 });
   let r: Awaited<ReturnType<typeof rotarSesion>>;
   try {
     r = await rotarSesion(token);
@@ -132,7 +137,7 @@ auth.post('/refresh', async (req, res) => {
     res.clearCookie(COOKIE, opcionesCookie);
     throw new HttpError(401, 'La cuenta o su empresa están desactivadas');
   }
-  await responderSesion(res, r.idUsuario, r);
+  await responderSesion(res, r.idUsuario, r, { empresa: pedida === undefined ? r.idEmpresa : pedida });
 });
 
 // POST /api/auth/logout - cierra la sesión de este dispositivo (cookie o { refresh_token }).
@@ -142,6 +147,22 @@ auth.post('/logout', async (req, res) => {
   if (token) await revocarPorToken(token);
   res.clearCookie(COOKIE, opcionesCookie);
   res.status(204).end();
+});
+
+// POST /api/auth/empresa - { id_empresa } → { token, expira_en, usuario }. Cambia la empresa
+// abierta en esta sesión; null vuelve a la administración de la plataforma. El refresh
+// token sigue siendo el mismo.
+auth.post('/empresa', autenticar, async (req, res) => {
+  const b = cuerpo(req);
+  const s = sesion(req);
+  const idEmpresa = b.id_empresa === null ? null : entero(b, 'id_empresa', { requerido: true, min: 1 })!;
+  if (idEmpresa === null && !s.plataforma) throw new HttpError(403, 'No administras la plataforma');
+  const usuario = await cargarUsuario(s.id_usuario, { empresa: idEmpresa, estricta: true });
+  if (!usuario) throw new HttpError(403, 'No perteneces a esa empresa o está desactivada');
+  // Los tokens anteriores a los refresh tokens no tienen familia: deben iniciar sesión otra vez
+  if (!req.familia) throw new HttpError(401, 'Inicia sesión de nuevo para cambiar de empresa');
+  await guardarEmpresaDeSesion(req.familia, idEmpresa);
+  res.json({ token: firmarToken(s.id_usuario, req.familia, idEmpresa), expira_en: config.jwt.expiraSegundos, usuario });
 });
 
 // GET /api/auth/yo - datos del usuario de la sesión

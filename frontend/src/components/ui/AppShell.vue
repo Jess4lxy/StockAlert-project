@@ -3,15 +3,22 @@
 // (en móvil el riel pasa a pestañas horizontales). El contenido va en el slot.
 // En la barra superior viven el botón "Instalar" y el indicador de conexión de la PWA.
 import { usePwa } from '@/pwa/usePwa';
+import { computed } from 'vue';
 import AppIcon from './AppIcon.vue';
-import type { ItemNavegacion } from './types';
+import SelectorEmpresa from './SelectorEmpresa.vue';
+import type { ItemNavegacion, Opcion } from './types';
 
-defineProps<{
+const props = defineProps<{
   items: ItemNavegacion[];
   /** Quién tiene la sesión abierta: nombre y detalle (empresa o rol) */
   usuario?: { nombre: string; detalle: string };
+  /** Empresas a las que puede cambiar; el selector aparece si hay más de una */
+  empresas?: Opcion<number>[];
+  empresa?: number;
+  cambiando?: boolean;
 }>();
-const emit = defineEmits<{ salir: [] }>();
+const variasEmpresas = computed(() => (props.empresas?.length ?? 0) > 1);
+const emit = defineEmits<{ salir: []; empresa: [id: number] }>();
 const activo = defineModel<string>('active', { required: true });
 
 const { enLinea, instalada, puedeInstalar, instalar } = usePwa();
@@ -24,7 +31,15 @@ const logo = `${import.meta.env.BASE_URL}favicon.svg`;
       <div class="flex h-14 items-center gap-3 px-4 md:px-6">
         <img :src="logo" alt="" class="h-8 w-8" />
         <span class="text-lg font-bold">Stock<span class="text-naranja">Alert</span></span>
-        <span class="ml-4 hidden text-sm text-white/70 md:inline">Inventario inteligente para tu negocio</span>
+        <SelectorEmpresa
+          v-if="variasEmpresas"
+          class="ml-4 hidden w-64 md:block"
+          :options="empresas!"
+          :value="empresa ?? 0"
+          :disabled="cambiando"
+          @change="(id) => emit('empresa', id)"
+        />
+        <span v-else class="ml-4 hidden text-sm text-white/70 md:inline">Inventario inteligente para tu negocio</span>
 
         <div class="ml-auto flex items-center gap-2">
           <!-- Estado de la sincronización (App.vue) -->
@@ -68,6 +83,10 @@ const logo = `${import.meta.env.BASE_URL}favicon.svg`;
             </button>
           </div>
         </div>
+      </div>
+      <!-- En móvil el selector de empresa va en su propia línea -->
+      <div v-if="variasEmpresas" class="px-4 pb-3 md:hidden">
+        <SelectorEmpresa :options="empresas!" :value="empresa ?? 0" :disabled="cambiando" @change="(id) => emit('empresa', id)" />
       </div>
     </header>
 

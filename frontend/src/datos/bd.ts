@@ -1,7 +1,8 @@
 // IndexedDB: inventario guardado en el dispositivo y cola de operaciones por enviar.
-// Cada usuario tiene su propia base (stockalert-u<id>), así otra cuenta en el mismo
-// dispositivo no ve sus datos. Al cerrar sesión se borran el inventario y las fotos; la
-// cola se conserva para que no se pierda lo que aún no llega al servidor.
+// Cada usuario tiene su propia base por empresa, así otra cuenta en el mismo dispositivo no
+// ve sus datos y lo pendiente de una empresa nunca se envía a otra. Al cerrar sesión o cambiar
+// de empresa se borran el inventario y las fotos; la cola se conserva para que no se pierda lo
+// que aún no llega al servidor.
 //
 // Almacenes:
 //   productos  copia del catálogo tal como lo tiene el servidor (clave: id_producto)
@@ -9,7 +10,18 @@
 //   fotos      fotos ya vistas o por subir (clave: id del producto o clave local)
 //   meta       datos sueltos (última sincronización, última alerta avisada)
 
-import type { Producto } from '@/api';
+import type { Producto, UsuarioSesion } from '@/api';
+
+/**
+ * Base del usuario en la empresa que tiene abierta (null: sin inventario). La de su primera
+ * empresa conserva el nombre de cuando solo se podía tener una, con lo que tuviera pendiente.
+ */
+export function claveInventario(u: UsuarioSesion | null | undefined): string | null {
+  if (!u?.empresa) return null;
+  const id = u.empresa.id_empresa;
+  const principal = u.empresas?.find((e) => e.id_empresa === id)?.principal ?? true;
+  return principal ? String(u.id_usuario) : `${u.id_usuario}-e${id}`;
+}
 
 export type TipoOperacion = 'crear_producto' | 'editar_producto' | 'estado_producto' | 'movimiento' | 'foto_producto';
 
@@ -56,9 +68,9 @@ interface FotoGuardada {
 }
 
 const VERSION = 1;
-let abierta: { usuario: number; bd: Promise<IDBDatabase> } | null = null;
+let abierta: { usuario: string; bd: Promise<IDBDatabase> } | null = null;
 
-function abrir(usuario: number): Promise<IDBDatabase> {
+function abrir(usuario: string): Promise<IDBDatabase> {
   if (abierta?.usuario === usuario) return abierta.bd;
   const bd = new Promise<IDBDatabase>((resolver, rechazar) => {
     const peticion = indexedDB.open(`stockalert-u${usuario}`, VERSION);
@@ -97,12 +109,12 @@ const terminada = (tx: IDBTransaction) =>
     tx.onabort = () => rechazar(tx.error);
   });
 
-async function leer<T>(usuario: number, almacen: string, accion: (a: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+async function leer<T>(usuario: string, almacen: string, accion: (a: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   const bd = await abrir(usuario);
   return comoPromesa(accion(bd.transaction(almacen).objectStore(almacen)));
 }
 
-async function escribir(usuario: number, almacenes: string[], accion: (tx: IDBTransaction) => void): Promise<void> {
+async function escribir(usuario: string, almacenes: string[], accion: (tx: IDBTransaction) => void): Promise<void> {
   const bd = await abrir(usuario);
   const tx = bd.transaction(almacenes, 'readwrite');
   const fin = terminada(tx);
@@ -112,10 +124,10 @@ async function escribir(usuario: number, almacenes: string[], accion: (tx: IDBTr
 
 /** Operaciones sobre la base del usuario indicado */
 export const bd = {
-  productos: (u: number) => leer<Producto[]>(u, 'productos', (a) => a.getAll()),
+  productos: (u: string) => leer<Producto[]>(u, 'productos', (a) => a.getAll()),
 
   // Reemplaza la copia completa en una sola transacción: nunca queda a medias
-  reemplazarProductos: (u: number, lista: Producto[]) =>
+  reemplazarProductos: (u: string, lista: Producto[]) =>
     escribir(u, ['productos', 'meta'], (tx) => {
       const almacen = tx.objectStore('productos');
       almacen.clear();
@@ -123,19 +135,19 @@ export const bd = {
       tx.objectStore('meta').put({ clave: 'sincronizado', valor: new Date().toISOString() });
     }),
 
-  guardarProducto: (u: number, producto: Producto) => escribir(u, ['productos'], (tx) => void tx.objectStore('productos').put(producto)),
+  guardarProducto: (u: string, producto: Producto) => escribir(u, ['productos'], (tx) => void tx.objectStore('productos').put(producto)),
 
-  cola: (u: number) => leer<Operacion[]>(u, 'cola', (a) => a.getAll()),
-  encolar: (u: number, op: Operacion) => escribir(u, ['cola'], (tx) => void tx.objectStore('cola').add(op)),
-  actualizarOperacion: (u: number, op: Operacion) => escribir(u, ['cola'], (tx) => void tx.objectStore('cola').put(op)),
-  quitarOperaciones: (u: number, ids: number[]) =>
+  cola: (u: string) => leer<Operacion[]>(u, 'cola', (a) => a.getAll()),
+  encolar: (u: string, op: Operacion) => escribir(u, ['cola'], (tx) => void tx.objectStore('cola').add(op)),
+  actualizarOperacion: (u: string, op: Operacion) => escribir(u, ['cola'], (tx) => void tx.objectStore('cola').put(op)),
+  quitarOperaciones: (u: string, ids: number[]) =>
     escribir(u, ['cola'], (tx) => {
       for (const id of ids) tx.objectStore('cola').delete(id);
     }),
 
   // Un alta llegó al servidor: las operaciones que dependían de ella ya conocen su id.
   // Todo en una transacción para que un cierre inesperado no las deje huérfanas.
-  async altaEnviada(u: number, op: Operacion, idProducto: number) {
+  async altaEnviada(u: string, op: Operacion, idProducto: number) {
     const pendientes = await this.cola(u);
     await escribir(u, ['cola'], (tx) => {
       const almacen = tx.objectStore('cola');
@@ -146,16 +158,16 @@ export const bd = {
     });
   },
 
-  foto: (u: number, clave: string) => leer<FotoGuardada | undefined>(u, 'fotos', (a) => a.get(clave)),
-  guardarFoto: (u: number, foto: FotoGuardada) => escribir(u, ['fotos'], (tx) => void tx.objectStore('fotos').put(foto)),
+  foto: (u: string, clave: string) => leer<FotoGuardada | undefined>(u, 'fotos', (a) => a.get(clave)),
+  guardarFoto: (u: string, foto: FotoGuardada) => escribir(u, ['fotos'], (tx) => void tx.objectStore('fotos').put(foto)),
 
-  async meta(u: number, clave: string): Promise<string | null> {
+  async meta(u: string, clave: string): Promise<string | null> {
     return (await leer<{ valor: string } | undefined>(u, 'meta', (a) => a.get(clave)))?.valor ?? null;
   },
-  guardarMeta: (u: number, clave: string, valor: string) => escribir(u, ['meta'], (tx) => void tx.objectStore('meta').put({ clave, valor })),
+  guardarMeta: (u: string, clave: string, valor: string) => escribir(u, ['meta'], (tx) => void tx.objectStore('meta').put({ clave, valor })),
 
-  // Cierre de sesión: solo queda la cola
-  olvidarDatos: (u: number) =>
+  // Cierre de sesión o cambio de empresa: solo queda la cola
+  olvidarDatos: (u: string) =>
     escribir(u, ['productos', 'fotos', 'meta'], (tx) => {
       for (const almacen of ['productos', 'fotos', 'meta']) tx.objectStore(almacen).clear();
     }),

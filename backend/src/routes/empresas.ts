@@ -2,7 +2,7 @@
 // No se borran: se desactivan (estado = false) y sus usuarios dejan de poder entrar.
 
 import { Router } from 'express';
-import { hashContrasena } from '../auth/contrasena.js';
+import { agregarAEmpresa } from '../auth/membresias.js';
 import { pool } from '../db.js';
 import { HttpError, noEncontrado } from '../errores.js';
 import { pagina, paginacion } from '../paginacion.js';
@@ -12,7 +12,8 @@ export const empresas = Router();
 
 const COLUMNAS = `
   e.id_empresa, e.nombre, e.fecha_registro, e.estado,
-  (SELECT count(*)::int FROM usuarios u WHERE u.id_empresa = e.id_empresa AND u.estado) AS usuarios,
+  (SELECT count(*)::int FROM usuarios_empresas ue JOIN usuarios u ON u.id_usuario = ue.id_usuario
+   WHERE ue.id_empresa = e.id_empresa AND ue.estado AND u.estado) AS usuarios,
   (SELECT count(*)::int FROM productos p WHERE p.id_empresa = e.id_empresa AND p.estado) AS productos`;
 
 async function buscar(id: number) {
@@ -54,18 +55,19 @@ empresas.get('/:id', async (req, res) => {
 });
 
 // POST /api/empresas - { nombre, admin?: { nombre, correo, contrasena } }
-// Con admin, crea también la cuenta del dueño de la empresa en la misma operación
+// Con admin, agrega también al dueño de la empresa en la misma operación: si el correo ya
+// tiene cuenta se usa esa (conserva su contraseña); si no, se crea
 empresas.post('/', async (req, res) => {
   const b = cuerpo(req);
   const nombre = texto(b, 'nombre', { requerido: true, min: 2, max: 150 })!;
-  let admin: { nombre: string; correo: string; hash: string } | null = null;
+  let admin: { nombre: string; correo: string; contrasena?: string } | null = null;
   if (b.admin !== undefined && b.admin !== null) {
     if (typeof b.admin !== 'object' || Array.isArray(b.admin)) throw new HttpError(400, 'admin debe ser un objeto');
     const a = b.admin as Record<string, unknown>;
     admin = {
       nombre: texto(a, 'nombre', { requerido: true, min: 2, max: 100 })!,
       correo: correo(a, 'correo', { requerido: true })!,
-      hash: await hashContrasena(contrasena(a, 'contrasena', { requerido: true })!),
+      contrasena: contrasena(a, 'contrasena'),
     };
   }
 
@@ -76,10 +78,7 @@ empresas.post('/', async (req, res) => {
     const { rows } = await client.query<{ id_empresa: number }>('INSERT INTO empresas (nombre) VALUES ($1) RETURNING id_empresa', [nombre]);
     id = rows[0].id_empresa;
     if (admin) {
-      await client.query(
-        `INSERT INTO usuarios (id_empresa, nombre, correo, contrasena_hash, rol) VALUES ($1, $2, $3, $4, 'admin')`,
-        [id, admin.nombre, admin.correo, admin.hash],
-      );
+      await agregarAEmpresa(client, { ...admin, rol: 'admin', idEmpresa: id });
     }
     await client.query('COMMIT');
   } catch (error) {

@@ -7,7 +7,7 @@
 
 import { computed, ref } from 'vue';
 import { api, configurarSesion, refrescarSesion, type Sesion, type UsuarioSesion } from '@/api';
-import { bd } from '@/datos/bd';
+import { bd, claveInventario } from '@/datos/bd';
 
 const CLAVE = 'stockalert-sesion';
 // Respuestas de la API que guarda el Service Worker (ver public/sw.js)
@@ -28,9 +28,14 @@ const token = ref<string | null>(null);
 const aviso = ref('');
 
 function guardar(sesion: Sesion) {
+  const anterior = claveInventario(usuarioActual.value);
+  // Primero el usuario: el inventario cambia de base (App.vue) antes de que haya un token de
+  // otra empresa con el que pudiera enviarse algo
   usuarioActual.value = sesion.usuario;
   token.value = sesion.token;
-  configurarSesion(sesion.token);
+  configurarSesion(sesion.token, sesion.usuario.empresa?.id_empresa ?? null);
+  // En el dispositivo solo queda el inventario de la empresa abierta
+  if (anterior && anterior !== claveInventario(sesion.usuario)) void olvidarInventario(anterior);
   try {
     localStorage.setItem(CLAVE, JSON.stringify({ usuario: sesion.usuario }));
   } catch {
@@ -38,24 +43,29 @@ function guardar(sesion: Sesion) {
   }
 }
 
+// Solo conserva lo que falta por enviar
+async function olvidarInventario(clave: string) {
+  await caches?.delete(CACHE_DATOS).catch(() => {});
+  await bd.olvidarDatos(clave).catch(() => {});
+}
+
 async function olvidar(motivo: string) {
-  const anterior = usuarioActual.value;
+  const anterior = claveInventario(usuarioActual.value);
   aviso.value = motivo;
   usuarioActual.value = null;
   token.value = null;
-  configurarSesion(null);
+  configurarSesion(null, undefined);
   try {
     localStorage.removeItem(CLAVE);
   } catch {
     // sin almacenamiento
   }
   // Los datos guardados para usar sin conexión son de esta cuenta: no deben verlos otras
-  await caches?.delete(CACHE_DATOS).catch(() => {});
-  // Del inventario del dispositivo solo queda lo que falta por enviar
-  if (anterior) await bd.olvidarDatos(anterior.id_usuario).catch(() => {});
+  if (anterior) await olvidarInventario(anterior);
+  else await caches?.delete(CACHE_DATOS).catch(() => {});
 }
 
-configurarSesion(null, {
+configurarSesion(null, usuarioActual.value ? (usuarioActual.value.empresa?.id_empresa ?? null) : undefined, {
   alRenovar: guardar,
   alRechazar: () => void olvidar('Tu sesión expiró o tu cuenta fue desactivada. Inicia sesión de nuevo.'),
 });
@@ -70,6 +80,11 @@ async function registrar(datos: { empresa: string; nombre: string; correo: strin
   const sesion = await api.registro(datos);
   aviso.value = '';
   guardar(sesion);
+}
+
+// Cambiar de empresa sin cerrar sesión (null: administración de la plataforma)
+async function cambiarEmpresa(idEmpresa: number | null) {
+  guardar(await api.cambiarEmpresa(idEmpresa));
 }
 
 // Cerrar sesión: la API revoca el refresh token de este dispositivo y borra la cookie.
@@ -98,6 +113,7 @@ export function useSesion() {
     aviso,
     iniciarSesion,
     registrar,
+    cambiarEmpresa,
     cerrarSesion,
     revisarSesion,
   };

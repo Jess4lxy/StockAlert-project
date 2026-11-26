@@ -84,7 +84,8 @@ function validarNueva(): boolean {
   if (nueva.conAdmin) {
     erroresNueva.adminNombre = nueva.adminNombre.trim().length < 2 ? 'Escribe el nombre (mínimo 2 caracteres)' : '';
     erroresNueva.adminCorreo = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nueva.adminCorreo.trim()) ? '' : 'Escribe un correo válido';
-    erroresNueva.adminContrasena = nueva.adminContrasena.length < 8 ? 'Usa al menos 8 caracteres' : '';
+    // Puede ir vacía si el correo ya tiene cuenta: la API lo revisa
+    erroresNueva.adminContrasena = nueva.adminContrasena && nueva.adminContrasena.length < 8 ? 'Usa al menos 8 caracteres' : '';
   } else {
     Object.assign(erroresNueva, { adminNombre: '', adminCorreo: '', adminContrasena: '' });
   }
@@ -100,7 +101,7 @@ async function crear() {
     const empresa = await api.crearEmpresa({
       nombre: nueva.nombre.trim(),
       ...(nueva.conAdmin
-        ? { admin: { nombre: nueva.adminNombre.trim(), correo: nueva.adminCorreo.trim(), contrasena: nueva.adminContrasena } }
+        ? { admin: { nombre: nueva.adminNombre.trim(), correo: nueva.adminCorreo.trim(), contrasena: nueva.adminContrasena || undefined } }
         : {}),
     });
     crearAbierto.value = false;
@@ -253,9 +254,9 @@ const fecha = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Merida', dat
             <TextInput id="admin-correo" v-model="nueva.adminCorreo" type="email" placeholder="nombre@negocio.com" autocomplete="off" :maxlength="150" :invalid="!!erroresNueva.adminCorreo" />
           </FormField>
           <FormField id="admin-contrasena" label="Contraseña inicial" :error="erroresNueva.adminContrasena">
-            <TextInput id="admin-contrasena" v-model="nueva.adminContrasena" type="password" placeholder="Mínimo 8 caracteres" autocomplete="new-password" :maxlength="128" :invalid="!!erroresNueva.adminContrasena" />
+            <TextInput id="admin-contrasena" v-model="nueva.adminContrasena" type="password" placeholder="Solo si es una cuenta nueva (mínimo 8)" autocomplete="new-password" :maxlength="128" :invalid="!!erroresNueva.adminContrasena" />
           </FormField>
-          <p class="self-end pb-2 text-xs text-texto-suave">Compártela con el administrador; podrá cambiarla al entrar.</p>
+          <p class="self-end pb-2 text-xs text-texto-suave">Si el correo ya tiene cuenta, se usa esa con su contraseña de siempre.</p>
         </div>
         <p v-if="errorDialogo" class="rounded-lg bg-error-10 p-3 text-sm text-error" role="alert">{{ errorDialogo }}</p>
       </form>

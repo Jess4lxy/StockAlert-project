@@ -93,6 +93,11 @@ const ejemploSesionAdmin = {
   correo: 'mariana.canche@stockalert.test',
   rol: 'admin',
   empresa: EMPRESA_DEMO,
+  empresas: [
+    { id_empresa: 5, nombre: 'Papelería El Estudiante', rol: 'almacen', principal: false },
+    { ...EMPRESA_DEMO, rol: 'admin', principal: true },
+  ],
+  plataforma: false,
 };
 
 const ejemploSesionPlataforma = {
@@ -101,6 +106,8 @@ const ejemploSesionPlataforma = {
   correo: 'admin1@stockalert.test',
   rol: 'plataforma',
   empresa: null,
+  empresas: [],
+  plataforma: true,
 };
 
 // Token de acceso de ejemplo: { fam: <familia de la sesión>, iat, exp (15 min después), sub: "1" }
@@ -110,6 +117,8 @@ const ejemploDuenoNuevo = {
   correo: 'guadalupe.dzib@stockalert.test',
   rol: 'admin',
   empresa: { id_empresa: 4, nombre: 'Abarrotes Doña Lupita' },
+  empresas: [{ id_empresa: 4, nombre: 'Abarrotes Doña Lupita', rol: 'admin', principal: true }],
+  plataforma: false,
 };
 
 const ejemploToken =
@@ -154,6 +163,7 @@ const ejemploUsuario = {
   fecha_registro: '2025-10-03T15:00:00.000Z',
   id_empresa: 1,
   empresa: 'Tienda Demo StockAlert',
+  cuenta_compartida: false,
 };
 
 // Clave de ejemplo de una operación registrada sin conexión (UUID que genera el cliente)
@@ -254,7 +264,7 @@ export const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'StockAlert API',
-    version: '2.2.0',
+    version: '2.3.0',
     description: [
       'API REST de **StockAlert**, inventario inteligente para pequeños negocios.',
       '',
@@ -268,7 +278,7 @@ export const openapi = {
       '**Flujo del cliente**',
       '- **Web** (`cliente: "web"`, por omisión): el refresh token llega en la cookie httpOnly `stockalert_refresh` (`Path=/api/auth`, `SameSite=Strict`, `Secure` en producción), que JavaScript no puede leer. Las peticiones a `/auth/*` deben usar `fetch(url, { credentials: "include" })` para que el navegador envíe y guarde la cookie (en desarrollo, el frontend y la API están en puertos distintos).',
       '- **Móvil** (`cliente: "movil"`): el refresh token llega en el JSON (`refresh_token`, `refresh_expira_en`); la app lo guarda en su almacenamiento seguro y lo envía en el cuerpo de `/auth/refresh` y `/auth/logout`.',
-      '- Si cualquier endpoint que no sea de `/auth` responde **401**, llama **una vez** a `POST /auth/refresh` y repite la petición con el token nuevo. Si el refresh también responde 401, la sesión terminó: manda al usuario a iniciar sesión. Si responde **409**, otra pestaña acaba de renovar la sesión: reintenta el refresh una vez.',
+      '- Si cualquier endpoint que no sea de `/auth` responde **401**, llama **una vez** a `POST /auth/refresh` y repite la petición con el token nuevo. Si el refresh también responde 401, la sesión terminó: manda al usuario a iniciar sesión.',
       '',
       '**Roles**',
       '- `plataforma`: administradores de StockAlert. No pertenecen a ninguna empresa: crean y desactivan empresas y usuarios, pero **no tienen inventario** (los endpoints de inventario les responden 403).',
@@ -401,11 +411,13 @@ export const openapi = {
           'El refresh token nuevo se entrega igual que al iniciar sesión, según el tipo de cliente con que se abrió la sesión: ' +
           'web en la cookie (`Set-Cookie`), móvil en el JSON.\n\n' +
           'Seguridad de la rotación:\n' +
-          '- Si llega un token que ya se usó **hace menos de 30 segundos**, casi seguro son dos pestañas renovando a la vez: responde **409** sin revocar nada. ' +
-          'El cliente reintenta una vez (en web, la cookie ya trae el token nuevo).\n' +
+          '- Si llega un token que ya se usó **hace menos de 30 segundos**, casi seguro son dos pestañas renovando a la vez, o una recarga cortó la respuesta y el cliente ' +
+          'nunca recibió el token nuevo: se emite otro token de la misma sesión y nada se revoca. Los 30 segundos cuentan desde el primer uso.\n' +
           '- Si llega un token ya reemplazado **más tarde**, alguien guardó una copia (posible robo): se cierra la sesión completa de ese dispositivo ' +
           'y responde 401 (*Por seguridad se cerró la sesión…*).\n' +
-          '- Si la cuenta o su empresa se desactivaron, se cierra la sesión, se borra la cookie y responde 401.',
+          '- Si la cuenta se desactivó o ya no pertenece a ninguna empresa activa, se cierra la sesión, se borra la cookie y responde 401.\n\n' +
+          'La sesión sigue en la empresa que tenía abierta. Opcionalmente se envía `id_empresa` (null: plataforma) para indicarla; si el usuario ya no pertenece a ella, abre la principal: ' +
+          'revisa `usuario.empresa` en la respuesta.',
         operationId: 'renovarSesion',
         security: [{ cookieRefresh: [] }, {}],
         requestBody: {
@@ -429,10 +441,30 @@ export const openapi = {
             'Caso poco común: la cuenta o su empresa se desactivaron justo entre la renovación y la respuesta',
           ),
           400: errorRespuesta('El cuerpo de la petición no es JSON válido', 'Se envió un cuerpo que no es JSON válido'),
-          409: errorRespuesta(
-            'La sesión se acaba de renovar en otra petición. Vuelve a intentarlo.',
-            'El mismo refresh token se renovó hace menos de 30 segundos (por ejemplo, dos pestañas a la vez). Reintenta una vez.',
-          ),
+          500: error500,
+        },
+      },
+    },
+    '/auth/empresa': {
+      post: {
+        tags: ['Autenticación'],
+        summary: 'Cambiar de empresa',
+        description:
+          'Cualquier rol. Abre otra de las empresas del usuario (`usuario.empresas`) sin cerrar la sesión: devuelve un token de acceso nuevo para esa empresa, ' +
+          'con el rol que tiene en ella. Desde ese momento se usa el token nuevo; el refresh token sigue siendo el mismo y `POST /auth/refresh` conserva la empresa.\n\n' +
+          'Con `id_empresa: null`, quien administra la plataforma (`usuario.plataforma`) regresa a ella.',
+        operationId: 'cambiarEmpresa',
+        requestBody: cuerpoJson('CambioEmpresa', { id_empresa: 5 }),
+        responses: {
+          200: json('Sesión en la otra empresa', ref('SesionRespuesta'), {
+            ...sesionWeb({ ...ejemploSesionAdmin, rol: 'almacen', empresa: { id_empresa: 5, nombre: 'Papelería El Estudiante' } }),
+          }),
+          400: errorCuerpo('id_empresa es obligatorio', 'id_empresa debe ser un número entero'),
+          401: respuesta('NoAutenticado'),
+          403: erroresRespuesta('No pertenece a esa empresa o no administra la plataforma', [
+            'No perteneces a esa empresa o está desactivada',
+            'No administras la plataforma',
+          ]),
           500: error500,
         },
       },
@@ -680,12 +712,14 @@ export const openapi = {
       },
       post: {
         tags: ['Usuarios'],
-        summary: 'Crear un usuario',
+        summary: 'Agregar un usuario',
         description:
           'Roles `plataforma` y `admin`.\n' +
-          '- `admin`: crea usuarios de su propia empresa con rol `admin` o `almacen`; `id_empresa` se ignora.\n' +
+          'Agrega a una persona a una empresa. **Si el correo ya tiene cuenta, se agrega esa cuenta** (`cuenta_existente: true`): conserva su nombre y contraseña, y podrá cambiar de empresa con `POST /auth/empresa`. ' +
+          'Si no la tiene, se crea y `contrasena` es obligatoria. Si ya estuvo en la empresa, se reactiva.\n\n' +
+          '- `admin`: agrega a su propia empresa con rol `admin` o `almacen`; `id_empresa` se ignora.\n' +
           '- `plataforma`: puede crear cualquier rol. Para `admin` o `almacen` debe indicar `id_empresa` (una empresa activa); ' +
-          'para `plataforma` no se usa `id_empresa` (esos usuarios no tienen empresa).',
+          'para `plataforma` no se usa `id_empresa` y el correo debe ser nuevo.',
         operationId: 'crearUsuario',
         requestBody: cuerpoJsonVarios('UsuarioNuevo', {
           admin: {
@@ -704,8 +738,9 @@ export const openapi = {
           },
         }),
         responses: {
-          201: json('Usuario creado', ref('Usuario'), {
+          201: json('Usuario creado o agregado a la empresa', ref('UsuarioAgregado'), {
             ...ejemploUsuario,
+            cuenta_existente: false,
             id_usuario: 13,
             nombre: 'Luis Tun Cauich',
             correo: 'luis.tun@stockalert.test',
@@ -714,6 +749,7 @@ export const openapi = {
           400: errorCuerpo(
             'nombre es obligatorio',
             'correo no es un correo válido',
+            'contrasena es obligatoria: ese correo todavía no tiene cuenta',
             'contrasena debe tener al menos 8 caracteres',
             'rol debe ser uno de: admin, almacen',
             'id_empresa es obligatorio',
@@ -721,7 +757,11 @@ export const openapi = {
           ),
           401: respuesta('NoAutenticado'),
           403: respuesta('SinPermiso'),
-          409: errorRespuesta('Ya existe una cuenta con ese correo', 'El correo ya está registrado'),
+          409: erroresRespuesta('Ya pertenece a la empresa o la cuenta no se puede agregar', [
+            'Esa persona ya pertenece a la empresa',
+            'Esa cuenta está desactivada: pide a la plataforma que la reactive',
+            'Ya existe una cuenta con ese correo',
+          ]),
           500: error500,
         },
       },
@@ -749,9 +789,11 @@ export const openapi = {
           'Roles `plataforma` (cualquier usuario) y `admin` (solo de su empresa). Se envían solo los campos a cambiar.\n' +
           '- `contrasena` asigna una nueva contraseña sin pedir la anterior (para que el usuario cambie la suya existe `PATCH /auth/contrasena`).\n' +
           '- `rol` solo cambia entre `admin` y `almacen`: el rol `plataforma` no se asigna ni se quita.\n' +
-          '- Nadie puede cambiar su propio rol ni desactivarse a sí mismo.\n' +
-          '- Con `estado: false` el usuario ya no puede iniciar sesión y su token deja de funcionar. No se borra porque sus movimientos lo referencian.\n' +
-          '- Con `contrasena` o `estado: false` se cierran las sesiones del usuario en todos sus dispositivos (sus refresh tokens dejan de servir y sus tokens de acceso fallan de inmediato). ' +
+          '- `rol` y `estado` son los de **una empresa**: la propia para `admin`; para `plataforma`, la de `id_empresa` (se puede omitir si está en una sola). Sin `id_empresa`, el `estado` de quien está en varias es el de toda la cuenta.\n' +
+          '- `nombre`, `correo` y `contrasena` son de la cuenta: un `admin` no puede cambiarlos si la persona también está en otra empresa (`cuenta_compartida`), responde 403.\n' +
+          '- Nadie puede cambiar su propio rol ni desactivarse a sí mismo en la empresa que tiene abierta.\n' +
+          '- Con `estado: false` ya no entra a esa empresa y su token de ella deja de funcionar, pero conserva las demás. No se borra porque sus movimientos lo referencian.\n' +
+          '- Con `contrasena`, o al desactivar toda la cuenta, se cierran las sesiones del usuario en todos sus dispositivos (sus refresh tokens dejan de servir y sus tokens de acceso fallan de inmediato). ' +
           'Si quien hace la petición se cambia su propia contraseña, su sesión actual sigue abierta.',
         operationId: 'editarUsuario',
         requestBody: cuerpoJsonVarios('UsuarioCambios', {
@@ -766,13 +808,17 @@ export const openapi = {
             'No puedes cambiar tu propio rol',
             'No puedes desactivar tu propia cuenta',
             'El rol plataforma no se asigna ni se quita: crea un usuario nuevo',
+            'Está en varias empresas: indica id_empresa',
             'rol debe ser uno de: plataforma, admin, almacen',
             'estado debe ser true o false',
           ),
           401: respuesta('NoAutenticado'),
           403: respuesta('SinPermiso'),
           404: respuesta('UsuarioNoEncontrado'),
-          409: errorRespuesta('Ya existe una cuenta con ese correo', 'El correo nuevo ya está registrado'),
+          409: erroresRespuesta('El correo nuevo ya está registrado o la cuenta está desactivada', [
+            'Ya existe una cuenta con ese correo',
+            'Esa cuenta está desactivada: pide a la plataforma que la reactive',
+          ]),
           500: error500,
         },
       },
@@ -1709,7 +1755,7 @@ export const openapi = {
       },
       UsuarioSesion: {
         type: 'object',
-        required: ['id_usuario', 'nombre', 'correo', 'rol', 'empresa'],
+        required: ['id_usuario', 'nombre', 'correo', 'rol', 'empresa', 'empresas', 'plataforma'],
         properties: {
           id_usuario: { type: 'integer' },
           nombre: { type: 'string' },
@@ -1717,10 +1763,25 @@ export const openapi = {
           rol: ref('Rol'),
           empresa: {
             type: ['object', 'null'],
-            description: 'Empresa del usuario; null para el rol plataforma',
+            description: 'Empresa abierta en la sesión; null en la administración de la plataforma',
             required: ['id_empresa', 'nombre'],
             properties: { id_empresa: { type: 'integer' }, nombre: { type: 'string' } },
           },
+          empresas: {
+            type: 'array',
+            description: 'Empresas activas a las que puede cambiar con `POST /auth/empresa`',
+            items: {
+              type: 'object',
+              required: ['id_empresa', 'nombre', 'rol', 'principal'],
+              properties: {
+                id_empresa: { type: 'integer' },
+                nombre: { type: 'string' },
+                rol: { type: 'string', enum: ['admin', 'almacen'], description: 'Rol en esa empresa' },
+                principal: { type: 'boolean', description: 'La primera a la que perteneció: se abre al iniciar sesión' },
+              },
+            },
+          },
+          plataforma: { type: 'boolean', description: 'También administra la plataforma' },
         },
       },
       SesionRespuesta: {
@@ -1799,11 +1860,11 @@ export const openapi = {
       AdminNuevo: {
         type: 'object',
         description: 'Cuenta del dueño (rol admin) que se crea junto con la empresa',
-        required: ['nombre', 'correo', 'contrasena'],
+        required: ['nombre', 'correo'],
         properties: {
           nombre: { type: 'string', minLength: 2, maxLength: 100 },
           correo: { type: 'string', format: 'email', maxLength: 150 },
-          contrasena: { type: 'string', minLength: 8, maxLength: 128 },
+          contrasena: { type: 'string', minLength: 8, maxLength: 128, description: 'Obligatoria solo si el correo todavía no tiene cuenta' },
         },
       },
       EmpresaNueva: {
@@ -1831,19 +1892,35 @@ export const openapi = {
           nombre: { type: 'string', maxLength: 100 },
           correo: { type: 'string', format: 'email', maxLength: 150 },
           rol: ref('Rol'),
-          estado: { type: 'boolean', description: 'false: desactivado (no puede iniciar sesión)' },
+          estado: { type: 'boolean', description: 'false: ya no entra a esa empresa' },
           fecha_registro: { type: 'string', format: 'date-time' },
           id_empresa: { type: ['integer', 'null'], description: 'null para el rol plataforma' },
           empresa: { type: ['string', 'null'], description: 'Nombre de la empresa; null para el rol plataforma' },
+          cuenta_compartida: { type: 'boolean', description: 'También está en otras empresas o en la plataforma' },
         },
+      },
+      UsuarioAgregado: {
+        allOf: [
+          ref('Usuario'),
+          {
+            type: 'object',
+            required: ['cuenta_existente'],
+            properties: { cuenta_existente: { type: 'boolean', description: 'true: el correo ya tenía cuenta y se agregó a la empresa' } },
+          },
+        ],
+      },
+      CambioEmpresa: {
+        type: 'object',
+        required: ['id_empresa'],
+        properties: { id_empresa: { type: ['integer', 'null'], minimum: 1, description: 'Empresa por abrir; null para la administración de la plataforma' } },
       },
       UsuarioNuevo: {
         type: 'object',
-        required: ['nombre', 'correo', 'contrasena', 'rol'],
+        required: ['nombre', 'correo', 'rol'],
         properties: {
           nombre: { type: 'string', minLength: 2, maxLength: 100 },
-          correo: { type: 'string', format: 'email', maxLength: 150, description: 'Se guarda en minúsculas; no puede estar registrado' },
-          contrasena: { type: 'string', minLength: 8, maxLength: 128 },
+          correo: { type: 'string', format: 'email', maxLength: 150, description: 'Se guarda en minúsculas. Si ya tiene cuenta, se agrega esa a la empresa' },
+          contrasena: { type: 'string', minLength: 8, maxLength: 128, description: 'Obligatoria solo si el correo todavía no tiene cuenta' },
           rol: {
             type: 'string',
             enum: ['plataforma', 'admin', 'almacen'],
@@ -1866,6 +1943,7 @@ export const openapi = {
           rol: { type: 'string', enum: ['admin', 'almacen'], description: 'Solo entre admin y almacen; no el propio' },
           estado: { type: 'boolean', description: 'false lo desactiva (no el propio); true lo reactiva' },
           contrasena: { type: 'string', minLength: 8, maxLength: 128, description: 'Contraseña nueva' },
+          id_empresa: { type: 'integer', minimum: 1, description: 'Solo plataforma: empresa a la que se aplican rol y estado' },
         },
       },
 

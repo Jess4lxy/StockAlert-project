@@ -15,6 +15,7 @@ import {
   type Tono,
 } from '@/components/ui';
 import MovimientoDialog from '@/components/inventario/MovimientoDialog.vue';
+import { claveInventario } from '@/datos/bd';
 import { useInventario, type Resultado } from '@/datos/inventario';
 import { notificarAlerta } from '@/dispositivo/notificaciones';
 import { useSesion } from '@/sesion';
@@ -28,7 +29,8 @@ const exito = ref('');
 function avisar(nombre: string, accion: string, r: Resultado) {
   exito.value = r.enviada ? `${nombre}: ${accion}.` : `${nombre}: guardado en el dispositivo; se enviará al volver la conexión.`;
   setTimeout(() => (exito.value = ''), 5000);
-  if (r.alerta && usuario.value) void notificarAlerta(usuario.value.id_usuario, r.alerta, nombre);
+  const clave = claveInventario(usuario.value);
+  if (r.alerta && clave) void notificarAlerta(clave, r.alerta, nombre);
 }
 
 

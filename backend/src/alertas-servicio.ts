@@ -78,7 +78,8 @@ async function datosDelAviso(idProducto: number, idEmpresa: number) {
               coalesce(json_agg(json_build_object('nombre', u.nombre, 'correo', u.correo) ORDER BY u.nombre)
                        FILTER (WHERE u.id_usuario IS NOT NULL), '[]') AS admins
        FROM empresas e
-       LEFT JOIN usuarios u ON u.id_empresa = e.id_empresa AND u.rol = 'admin' AND u.estado
+       LEFT JOIN usuarios_empresas ue ON ue.id_empresa = e.id_empresa AND ue.rol = 'admin' AND ue.estado
+       LEFT JOIN usuarios u ON u.id_usuario = ue.id_usuario AND u.estado
        WHERE e.id_empresa = $1
        GROUP BY e.id_empresa, e.nombre`,
       [idEmpresa],

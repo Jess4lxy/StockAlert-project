@@ -111,13 +111,13 @@ cd frontend && npm install && npm run dev    # Web en http://localhost:5173
 
 ### Cuentas, empresas y roles
 
-Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, alertas y usuarios. Sin sesión, la app muestra **Iniciar sesión** y **Registra tu negocio** (registro público: crea la empresa y su administrador).
+Cada negocio es una **empresa** y solo ve sus propios productos, movimientos, alertas y usuarios. Una persona tiene una sola cuenta (su correo) y puede estar en varias empresas, con un rol en cada una (tabla `usuarios_empresas`): al agregar un correo que ya tiene cuenta se usa esa, con su contraseña de siempre, y la persona cambia de empresa desde la barra superior sin cerrar sesión (`POST /auth/empresa`). El admin de una empresa no puede cambiar el nombre, correo o contraseña de alguien que también está en otra. Sin sesión, la app muestra **Iniciar sesión** y **Registra tu negocio** (registro público: crea la empresa y su administrador).
 
 **Sesión.** El token de acceso (JWT) dura 15 minutos y se envía en `Authorization: Bearer <token>`. Lo renueva un refresh token de 30 días que se rota en cada uso:
 
 - Web: el refresh token viaja en la cookie `stockalert_refresh` (`httpOnly`, `SameSite=Strict`, solo para `/api/auth`), que JavaScript no puede leer. El front solo guarda en el dispositivo los datos del usuario; el token de acceso vive en memoria.
 - Móvil: se envía `"cliente": "movil"` en el login o el registro; la respuesta trae `refresh_token`, que la app guarda en su almacenamiento seguro y manda en el cuerpo de `/auth/refresh` y `/auth/logout`.
-- Ante un 401 de cualquier endpoint, el cliente llama una vez a `POST /api/auth/refresh` y repite la petición. Un 409 en el refresh significa que otra pestaña acaba de renovar la sesión: se reintenta una vez.
+- Ante un 401 de cualquier endpoint, el cliente llama una vez a `POST /api/auth/refresh` y repite la petición. Si dos pestañas renuevan a la vez, o una recarga corta la respuesta, la API acepta el mismo refresh token durante 30 segundos desde su primer uso y entrega otro, así la sesión no se pierde.
 - Si alguien usa un refresh token que ya fue reemplazado, se cierra esa sesión por posible robo. Cerrar sesión, cambiar la contraseña o desactivar al usuario revoca sus sesiones y sus tokens de acceso dejan de valer de inmediato.
 
 | Rol | Quién es | Pantallas |
